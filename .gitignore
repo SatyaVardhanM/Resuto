@@ -1,0 +1,84 @@
+# ════════════════════════════════════════════════════════════════════
+#  Resuto — .gitignore
+#  Rule: if it's generated, personal, sensitive, or binary → exclude
+# ════════════════════════════════════════════════════════════════════
+
+# ── Secrets & credentials (NEVER commit) ────────────────────────────
+local_settings.json
+.env
+*.lic
+core/gsheets_creds.json
+core/gsheets_creds.enc
+core/automatedjob-*.json
+*.pem
+*.key
+*.p12
+
+# ── User profile & personal data ────────────────────────────────────
+data/resume_data.xml
+resume_data.xml
+user_metrics.json
+
+# ── Runtime databases & logs ─────────────────────────────────────────
+*.db
+*.log
+bot.log
+app_error.log
+frontend/job_prefs.json
+data/prompts.db
+
+# ── Build output (lives at ../resuto-builds/ outside project) ────────
+dist_out/
+dist/
+build/
+build_armor/
+app.dist/
+app.build/
+resuto.dist/
+onefile/
+*.spec
+*.exe
+!installer.iss
+!installer.nsi
+Resuto-Setup.exe
+
+# ── Nuitka & PyInstaller artifacts ──────────────────────────────────
+*.nuitka
+*.build/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.bak
+*.nobundle
+*.enc.tmp
+
+# ── PyArmor leftovers ────────────────────────────────────────────────
+core/pyarmor_runtime.py
+core/pyarmor_runtime_000000/
+.pyarmor/
+pyarmor-*
+
+# ── Chrome browser profile (LinkedIn session) ────────────────────────
+BotChromeProfile/
+ChromeProfile/
+
+# ── App output (resumes, exports) ────────────────────────────────────
+output/
+resumes/
+
+# ── OS & IDE ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Python virtual environments ──────────────────────────────────────
+venv/
+.venv/
+env/

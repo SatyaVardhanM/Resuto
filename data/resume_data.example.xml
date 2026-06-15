@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ====================================================================
+  TEMPLATE FILE  -  safe to commit to git
+  ====================================================================
+  1. Copy this file and rename the copy to:  resume_data.xml
+  2. Replace every placeholder below with your real details.
+  3. resume_data.xml is git-ignored, so your real data stays local.
+  ====================================================================
+-->
+<profile>
+    <!-- Personal Information -->
+    <personal>
+        <name>Your Full Name</name>
+        <email>your.email@example.com</email>
+        <phone>+1 (000) 000-0000</phone>
+        <location>City, ST, Country</location>
+        <linkedin>linkedin.com/in/your-handle</linkedin>
+        <github>github.com/your-handle</github>
+    </personal>
+
+    <!-- Professional Summary -->
+    <summary>
+        Results-driven Software Engineer with 3.5+ years of experience building and delivering
+        enterprise-grade .NET applications in Agile environments. Proven expertise in full-stack
+        development, CI/CD automation, and applied machine learning — including deep learning models
+        deployed on datasets exceeding 500,000 entries. Currently advancing in AI/ML through a
+        graduate degree, with hands-on experience in neural networks, computer vision, and
+        data-driven decision systems.
+    </summary>
+
+    <!-- Technical Skills -->
+    <skills>
+        <category name="languages">
+            <skill>Python</skill>
+            <skill>C#</skill>
+            <skill>Java</skill>
+            <skill>JavaScript</skill>
+            <skill>TypeScript</skill>
+            <skill>C</skill>
+            <skill>C++</skill>
+            <skill>SQL</skill>
+            <skill>HTML</skill>
+            <skill>CSS</skill>
+            <skill>Batch Script</skill>
+        </category>
+
+        <category name="machine_learning">
+            <skill>NumPy</skill>
+            <skill>Pandas</skill>
+            <skill>Scikit-learn</skill>
+            <skill>PyTorch</skill>
+            <skill>TensorFlow</skill>
+            <skill>OpenCV</skill>
+            <skill>Pillow</skill>
+        </category>
+
+        <category name="frameworks">
+            <skill>.NET</skill>
+            <skill>.NET Core</skill>
+            <skill>Django</skill>
+            <skill>Flask</skill>
+            <skill>Web2Py</skill>
+            <skill>Tkinter</skill>
+            <skill>PyQt</skill>
+        </category>
+
+        <category name="tools_platforms">
+            <skill>Git</skill>
+            <skill>GitHub</skill>
+            <skill>Azure DevOps</skill>
+            <skill>Azure Pipelines</skill>
+            <skill>CI/CD</skill>
+            <skill>Infrastructure as Code (IaC)</skill>
+        </category>
+
+        <category name="practices">
+            <skill>Agile (Scrum/Kanban)</skill>
+            <skill>SOLID Principles</skill>
+            <skill>MVC</skill>
+            <skill>Repository Pattern</skill>
+            <skill>Unit of Work</skill>
+            <skill>TDD (NUnit)</skill>
+        </category>
+    </skills>
+
+    <!-- Work Experience -->
+    <experience>
+        <job>
+            <title>Software Engineer</title>
+            <company>TSS Consultancy Pvt. Ltd.</company>
+            <location>City, ST, Country</location>
+            <duration>Aug 2021 – Dec 2024</duration>
+            <bullets>
+                <bullet>Led full lifecycle development of 'CKYC', a mission-critical .NET application using MVC and Repository design patterns in a Scrum team; resolved critical bugs and maintained high performance under production load.</bullet>
+                <bullet>Developed the 'Aadhaar Masking' feature using a deep learning OCR model (Faster R-CNN, TensorFlow, Keras), achieving precise text detection and data security across a dataset of 500,000+ records.</bullet>
+                <bullet>Engineered and maintained 'CRM', a security analytics application in C#/.NET, utilizing Unit of Work and Repository patterns to enhance threat detection and system reliability.</bullet>
+                <bullet>Implemented high-priority hotfixes during Kanban sprints, demonstrating rapid problem-solving while adhering to SOLID principles to maintain code quality and system stability.</bullet>
+                <bullet>Authored comprehensive unit test suites in NUnit/C# with mocking frameworks, achieving broad test coverage and safeguarding software integrity across multiple projects.</bullet>
+                <bullet>Integrated Azure DevOps CI/CD pipelines and Infrastructure as Code (IaC) practices, automating build/deploy workflows and significantly reducing manual intervention.</bullet>
+            </bullets>
+        </job>
+
+        <job>
+            <title>Web Designer (Internship)</title>
+            <company>Durga Avenues Constructions</company>
+            <location>City, ST, Country</location>
+            <duration>Jun 2020 – Jul 2020</duration>
+            <bullets>
+                <bullet>Designed and built a responsive company website using HTML, CSS, and JavaScript, showcasing construction project portfolios with intuitive navigation and modern UI/UX.</bullet>
+                <bullet>Developed a JavaScript-powered ChatBot integrated into the existing web infrastructure to handle customer queries and improve response time.</bullet>
+                <bullet>Collaborated cross-functionally with project managers and marketing to ensure brand alignment, conducting performance and usability testing for optimal load times.</bullet>
+            </bullets>
+        </job>
+    </experience>
+
+    <!-- Education -->
+    <education>
+        <degree>
+            <name>Your Full Name</name>
+            <school>Indiana Wesleyan University</school>
+            <year>2024 – Present</year>
+        </degree>
+    </education>
+
+    <!-- Projects -->
+    <projects>
+        <project>
+            <name>Your Full Name</name>
+            <tech>PyQt, Tkinter, OpenCV</tech>
+            <description>Built a Windows screenshot application that automates Excel report generation with organized, annotated screenshots, incorporating image cropping and color marker tools. Significantly reduced documentation time for manual testing teams.</description>
+        </project>
+
+        <project>
+            <name>Your Full Name</name>
+            <tech>Deep Learning, CNN, TensorFlow</tech>
+            <description>Designed an autonomous drone with GPS tracking, real-time data transmission, and voice/facial recognition. Implemented a CNN-based facial recognition model trained on 10,000+ images, achieving 86.5% identification accuracy.</description>
+        </project>
+
+        <project>
+            <name>Your Full Name</name>
+            <tech>Classification, Regression, K-NN, Scikit-learn</tech>
+            <description>Performed EDA on agricultural datasets to forecast market trends. Implemented a K-Nearest Neighbors classifier with visualizations to improve predictive accuracy for new data inputs.</description>
+        </project>
+
+        <project>
+            <name>Your Full Name</name>
+            <tech>Django, Python</tech>
+            <description>Developed a browser-based 3D modeling tool using Django, enabling real-time object creation, modification, and rendering in a collaborative environment.</description>
+        </project>
+    </projects>
+
+    <!-- Volunteer Work -->
+    <volunteer>
+        <activity>
+            <role>NSS Volunteer</role>
+            <organization>National Service Scheme (NSS)</organization>
+            <description>Volunteered to donate food and clothing to underprivileged communities, organize school cleaning drives, and distribute stationery to support government primary school students.</description>
+        </activity>
+    </volunteer>
+</profile>
