@@ -33,20 +33,28 @@ APP_NAME = "Resuto"
 
 # ── Log file path ─────────────────────────────────────────────────
 def _log_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        # Next to the exe
-        return Path(sys.executable).parent
-
     system = platform.system()
+
     if system == "Windows":
-        base = Path(os.environ.get("APPDATA", Path.home())) / APP_NAME
+        # Documents\Resuto\logs -- always visible and user-accessible
+        docs = Path.home() / "Documents"
+        if not docs.exists():
+            docs = Path.home()
+        base = docs / APP_NAME / "logs"
     elif system == "Darwin":
         base = Path.home() / "Library" / "Logs" / APP_NAME
     else:
-        base = Path.home() / ".local" / "share" / APP_NAME
+        base = Path.home() / ".local" / "share" / APP_NAME / "logs"
 
-    base.mkdir(parents=True, exist_ok=True)
-    return base
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        return base
+    except OSError:
+        import tempfile
+        fallback = Path(tempfile.gettempdir()) / APP_NAME / "logs"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
 
 LOG_FILE = str(_log_dir() / "bot.log")
 

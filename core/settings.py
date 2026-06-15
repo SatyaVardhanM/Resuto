@@ -12,6 +12,21 @@ import sys
 import json
 
 
+def _resuto_documents_dir() -> str:
+    """
+    Returns Documents\Resuto\ — the user-visible home for all Resuto data.
+    Always accessible, never hidden, works on all Windows accounts.
+    Falls back to home dir if Documents is unavailable.
+    """
+    import pathlib
+    docs = pathlib.Path.home() / "Documents"
+    if not docs.exists():
+        docs = pathlib.Path.home()
+    base = docs / "Resuto"
+    base.mkdir(parents=True, exist_ok=True)
+    return str(base)
+
+
 def _exe_dir() -> str:
     """
     Root directory for user-writable files.
@@ -68,6 +83,34 @@ def _save(settings: dict) -> None:
         print("   [WARN] Could not save local_settings.json: %s" % e)
 
 
+def first_run_setup():
+    """
+    On first run, copy resume_data.example.xml to Documents/Resuto/
+    so users can find and edit it easily.
+    """
+    import shutil, pathlib, sys as _sys
+
+    docs_dir    = pathlib.Path(_resuto_documents_dir())
+    xml_dest    = docs_dir / "resume_data.xml"
+    example_dst = docs_dir / "resume_data.example.xml"
+
+    if xml_dest.exists():
+        return
+
+    if getattr(_sys, "frozen", False):
+        exe_dir = pathlib.Path(_sys.executable).parent
+    else:
+        exe_dir = pathlib.Path(__file__).parent.parent
+
+    example_src = exe_dir / "data" / "resume_data.example.xml"
+    if example_src.exists():
+        shutil.copy(example_src, example_dst)
+        print(f"[Setup] Example resume copied to: {example_dst}")
+    else:
+        print(f"[Setup] Documents/Resuto/ created at: {docs_dir}")
+
+
+
 def get_settings(force_prompt: bool = False) -> dict:
     settings = _load()
 
@@ -97,7 +140,7 @@ def get_settings(force_prompt: bool = False) -> dict:
     else:
         changed = False
         if "output_dir" not in settings:
-            settings["output_dir"] = os.path.join(_exe_dir(), "output")
+            settings["output_dir"] = os.path.join(_resuto_documents_dir(), "output")
             changed = True
         if "resume_data_path" not in settings:
             settings["resume_data_path"] = _default_resume_path()
@@ -149,12 +192,17 @@ def get_resume_data_path() -> str:
     if stored and os.path.isfile(stored):
         return stored
 
-    # Default next to exe / project root
+    # Default: Documents\Resuto\resume_data.xml
+    docs_xml = os.path.join(_resuto_documents_dir(), "resume_data.xml")
+    if os.path.isfile(docs_xml):
+        return docs_xml
+
+    # Fallback: next to exe / project root
     default = _default_resume_path()
     if os.path.isfile(default):
         return default
 
-    return default
+    return docs_xml   # return Documents path as default even if not yet created
 
 
 def out_path(*parts: str) -> str:

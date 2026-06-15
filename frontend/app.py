@@ -839,23 +839,45 @@ class App(ctk.CTk):
         try:
             import anthropic as _ant
             from core.config import AI_MODEL as _model
+
+            # ── Pre-flight checks — fail fast with clear messages ──
+            api_key = self._api_var.get().strip()
+            if not api_key:
+                self._q.put(("roles_error",
+                    "No API key set. Please enter your Anthropic API key in Settings."))
+                return
+
+            xml = self._xml_path()
+            if not xml:
+                self._q.put(("roles_error",
+                    "No resume XML file set. Please link your resume_data.xml in Settings."))
+                return
+
+            import os as _os
+            if not _os.path.exists(xml):
+                self._q.put(("roles_error",
+                    f"Resume XML not found: {xml}\nPlease check the path in Settings."))
+                return
+
             self._q.put(("s3_status", "Loading your profile..."))
 
-            # Always reload from XML directly — MY_PROFILE may be stale
-            # if the XML was linked after the app started
+            # Load profile from XML
             _mp = {}
-            xml = self._xml_path()
             try:
                 from core.profile import load_profile_from_xml
                 _mp = load_profile_from_xml(xml)
-            except Exception:
-                # Fallback to module-level if function not available
-                from core.profile import MY_PROFILE as _mp_mod
-                _mp = _mp_mod
+            except Exception as xml_err:
+                try:
+                    from core.profile import MY_PROFILE as _mp_mod
+                    _mp = _mp_mod
+                except Exception:
+                    self._q.put(("roles_error",
+                        f"Failed to load profile: {xml_err}"))
+                    return
 
             if not _mp:
                 self._q.put(("roles_error",
-                    "Profile is empty. Please complete the resume intake in Settings first."))
+                    "Profile is empty. Please complete your resume_data.xml first."))
                 return
 
             skills  = [s for v in _mp.get("skills",{}).values() for s in v]
@@ -2498,8 +2520,15 @@ class App(ctk.CTk):
                 elif kind == "s3_status":    self._s3_status.configure(text=data)
                 elif kind == "roles_ready":  self._populate_roles(data)
                 elif kind == "roles_error":
-                    self._s3_err.configure(text=f"Error: {data}")
-                    self._show_step(1)
+                    # Step 2 (loading screen) is about to be hidden
+                    # Show error in status bar AND popup so user sees it
+                    self._show_step(1)   # go back to setup screen
+                    self._set_status(f"Error: {data}")
+                    try:
+                        import tkinter.messagebox as _mb
+                        _mb.showerror("Profile Analysis Failed", data)
+                    except Exception:
+                        pass
                 elif kind == "stats_data":   self._apply_stats_data(data)
                 elif kind == "history_data": self._apply_history_data(data)
                 elif kind == "push_latest":   self._do_push_latest(data)
