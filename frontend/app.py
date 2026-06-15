@@ -2390,6 +2390,105 @@ class App(ctk.CTk):
     def _on_bot_done(self, code: int):
         self._q.put(("done", code))
 
+    def _show_one_by_one_action(self, line: str):
+        """
+        Parse BOT_WAITING line and show Applied/Skip action panel.
+        Line format: "BOT_WAITING: title | company | url | score"
+        """
+        try:
+            payload = line.replace("BOT_WAITING:", "").strip()
+            parts   = [p.strip() for p in payload.split("|")]
+            title   = parts[0] if len(parts) > 0 else "Unknown"
+            company = parts[1] if len(parts) > 1 else "Unknown"
+            url     = parts[2] if len(parts) > 2 else ""
+            score   = parts[3] if len(parts) > 3 else "?"
+        except Exception:
+            title = line; company = ""; url = ""; score = "?"
+
+        # Show in action panel (runs on main thread via after())
+        self.after(0, lambda: self._show_action_panel(title, company, url, score))
+
+    def _show_action_panel(self, title: str, company: str, url: str, score: str):
+        """Show the Applied/Skip panel while bot waits for user."""
+        # Remove existing panel if any
+        self._hide_action_panel()
+
+        # Create panel above the log area
+        panel = ctk.CTkFrame(self._run_frame, fg_color=BG_CARD,
+                              corner_radius=10, border_width=1,
+                              border_color=ACCENT)
+        panel.pack(fill="x", padx=16, pady=(0, 8), before=self._run_log)
+        self._action_panel = panel
+
+        # Job info
+        ctk.CTkLabel(panel,
+            text="Waiting for your action",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=ACCENT).pack(anchor="w", padx=12, pady=(10,2))
+
+        ctk.CTkLabel(panel,
+            text=f"{title}",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=FG, wraplength=500).pack(anchor="w", padx=12)
+
+        ctk.CTkLabel(panel,
+            text=f"{company}   |   Match: {score}%",
+            font=ctk.CTkFont(size=11),
+            text_color=FG_DIM).pack(anchor="w", padx=12, pady=(0,8))
+
+        # Buttons
+        btn_row = ctk.CTkFrame(panel, fg_color="transparent")
+        btn_row.pack(fill="x", padx=12, pady=(0,10))
+
+        ctk.CTkButton(btn_row,
+            text="✓  Applied",
+            width=130,
+            fg_color=SUCCESS,
+            hover_color="#1a9e4a",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=lambda: self._send_bot_action("APPLIED")
+        ).pack(side="left", padx=(0,8))
+
+        ctk.CTkButton(btn_row,
+            text="✗  Skip",
+            width=130,
+            fg_color=BG_FIELD,
+            hover_color=BG_HOVER,
+            font=ctk.CTkFont(size=12),
+            command=lambda: self._send_bot_action("SKIP")
+        ).pack(side="left")
+
+        if url:
+            ctk.CTkButton(btn_row,
+                text="Open Job",
+                width=100,
+                fg_color="transparent",
+                text_color=ACCENT,
+                hover_color=BG_HOVER,
+                font=ctk.CTkFont(size=11),
+                command=lambda: __import__("webbrowser").open(url)
+            ).pack(side="left", padx=(8,0))
+
+        self._set_status(f"Review: {title} @ {company} — click Applied or Skip")
+
+    def _hide_action_panel(self):
+        """Remove the action panel."""
+        if hasattr(self, "_action_panel") and self._action_panel:
+            try:
+                self._action_panel.destroy()
+            except Exception:
+                pass
+            self._action_panel = None
+
+    def _send_bot_action(self, action: str):
+        """Send APPLIED or SKIP to orchestrator stdin."""
+        self._hide_action_panel()
+        if self._runner:
+            self._runner.send(action)
+        label = "Applied — resume sent" if action == "APPLIED" else "Skipped — finding next job"
+        self._set_status(label)
+        self._set_phase("Generating next resume...")
+
     def _poll(self):
         try:
             while True:
@@ -2423,6 +2522,11 @@ class App(ctk.CTk):
 
     def _handle_line(self, line: str):
         s = line.strip()
+
+        # ── One-by-one mode: bot waiting for user action ──────────
+        if s.startswith("BOT_WAITING:"):
+            self._show_one_by_one_action(s)
+            return
 
         # ── Real-time activity updates from every pipeline stage ──
         # Stage 0: Browser / LinkedIn
@@ -5013,7 +5117,8 @@ if __name__ == "__main__":
                                for _ in [0] if "--mode" in sys.argv), "easy_apply"),
                 "roles":      sys.argv[sys.argv.index("--roles")+1:]
                                if "--roles" in sys.argv else [],
-                "clear_runs": "--clear-runs" in sys.argv,
+                "clear_runs":        "--clear-runs" in sys.argv,
+                "application_mode":  get_settings().get("application_mode", "continuous"),
             })()))
         except (KeyboardInterrupt, EOFError):
             pass

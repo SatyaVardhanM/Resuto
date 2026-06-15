@@ -170,6 +170,45 @@ def get_role_choice(roles: list) -> list:
             print("   [ERR] Type A or S")
 
 
+# ── One-by-one mode protocol ──────────────────────────────────────
+# Orchestrator prints:  "BOT_WAITING: title | company | url | score"
+# UI detects this line → shows [Applied] [Skip] buttons
+# User clicks → UI sends "APPLIED" or "SKIP" via stdin
+# Orchestrator reads stdin → continues
+
+BOT_WAITING_PREFIX = "BOT_WAITING:"
+BOT_RESPONSE_APPLIED = "APPLIED"
+BOT_RESPONSE_SKIP    = "SKIP"
+
+
+def _wait_for_user_action(job: dict, loop) -> str:
+    """
+    Print job details to stdout so UI can show Applied/Skip buttons.
+    Block reading stdin until user responds.
+    Returns "APPLIED" or "SKIP".
+    """
+    import sys, asyncio
+
+    title   = job.get("job_title", "Unknown")
+    company = job.get("company",   "Unknown")
+    url     = job.get("job_url",   "")
+    score   = job.get("match_score", 0)
+
+    # Signal UI to show buttons
+    print("%s %s | %s | %s | %s" % (
+        BOT_WAITING_PREFIX, title, company, url, score), flush=True)
+
+    # Read user action from stdin (UI sends APPLIED or SKIP)
+    try:
+        action = input().strip().upper()
+        if action not in (BOT_RESPONSE_APPLIED, BOT_RESPONSE_SKIP):
+            action = BOT_RESPONSE_SKIP   # default to skip on invalid input
+    except (EOFError, KeyboardInterrupt):
+        action = BOT_RESPONSE_SKIP
+
+    return action
+
+
 def get_apply_mode() -> str:
     print("\n" + "-" * 50)
     print("[>>] Application Type")
@@ -582,8 +621,81 @@ async def run_applications(
     print("\n[OK] Phase 1 complete -- %d job(s) matched, %d scanned."
           % (matched_count, scanned_count))
 
-    # -- PHASE 2 -- Batch resume generation -----------------------
-    if matched_count > 0:
+    # -- PHASE 2 + 3 -- Resume generation and applying -----------
+    if matched_count == 0:
+        return applied_total
+
+    if application_mode == "one_at_a_time":
+        # ── One-by-one mode ──────────────────────────────────────
+        # Generate resume for ONE job at a time, pause for user action
+        print("\n[>>] One-by-one mode: generating and applying one job at a time.")
+        remaining = max_jobs if not unlimited else 9999
+        matched_jobs = tracker.get_jobs_ready_to_apply.__wrapped__() \
+            if hasattr(tracker.get_jobs_ready_to_apply, "__wrapped__") \
+            else None
+
+        # Get all matched jobs not yet actioned
+        import db.tracker as _t2
+        conn = _t2._connect()
+        try:
+            all_matched = [dict(r) for r in conn.execute(
+                f"SELECT * FROM {_t2.TABLE} WHERE status = \'matched\'"
+            ).fetchall()]
+        except Exception:
+            all_matched = []
+        finally:
+            conn.close()
+
+        for job in all_matched:
+            if remaining <= 0:
+                print("[>>] Applied to %d job(s). Limit reached." % max_jobs)
+                break
+
+            # Generate resume for this single job
+            print("\n[>>] Generating resume for: %s @ %s"
+                  % (job.get("job_title","?"), job.get("company","?")))
+            await loop.run_in_executor(
+                None,
+                batch_generate_resumes,
+                my_profile,
+                {"docx": out_path("resumes", "docx"),
+                 "pdf":  out_path("resumes", "pdf")},
+                SESSION_START,
+                [job["id"]],   # generate for this job only
+            )
+
+            # Refresh job with resume paths
+            conn2 = _t2._connect()
+            try:
+                row = conn2.execute(
+                    f"SELECT * FROM {_t2.TABLE} WHERE id = ?", (job["id"],)
+                ).fetchone()
+                job = dict(row) if row else job
+            finally:
+                conn2.close()
+
+            # Pause — wait for user to click Applied or Skip
+            action = await loop.run_in_executor(
+                None, _wait_for_user_action, job, loop)
+
+            if action == BOT_RESPONSE_APPLIED:
+                # Apply to this job
+                result = await guided_apply_session(
+                    context, [job], reapply=False)
+                applied = result.get("applied", 0)
+                if applied:
+                    applied_total += 1
+                    remaining     -= 1
+                    print("[>>] Applied. Remaining: %d" % remaining)
+                else:
+                    print("[>>] Apply failed — job not counted.")
+            else:
+                # Skip — mark as skipped, count unchanged
+                tracker.mark_job_outcome(job["id"], "skipped")
+                print("[>>] Skipped. Remaining: %d" % remaining)
+
+    else:
+        # ── Continuous mode (original behavior) ──────────────────
         await loop.run_in_executor(
             None,
             batch_generate_resumes,
@@ -593,19 +705,18 @@ async def run_applications(
             SESSION_START,
         )
 
-    # -- PHASE 3 -- Guided applying -------------------------------
-    ready_jobs = tracker.get_jobs_ready_to_apply()
-    if ready_jobs:
-        print("\n" + "=" * 60)
-        print("   %d job(s) have resumes ready." % len(ready_jobs))
-        print("=" * 60)
-        print("   Ready to start applying now? [y / n]: ", flush=True)
-        answer = (await loop.run_in_executor(None, input, "")).strip().lower()
-        if answer in ("y", "yes"):
-            result = await guided_apply_session(context, ready_jobs, reapply=False)
-            applied_total += result["applied"]
-        else:
-            print("   [OK] No problem -- the resumes are saved. Run again when ready.")
+        ready_jobs = tracker.get_jobs_ready_to_apply()
+        if ready_jobs:
+            print("\n" + "=" * 60)
+            print("   %d job(s) have resumes ready." % len(ready_jobs))
+            print("=" * 60)
+            print("   Ready to start applying now? [y / n]: ", flush=True)
+            answer = (await loop.run_in_executor(None, input, "")).strip().lower()
+            if answer in ("y", "yes"):
+                result = await guided_apply_session(context, ready_jobs, reapply=False)
+                applied_total += result["applied"]
+            else:
+                print("   [OK] No problem -- the resumes are saved. Run again when ready.")
 
     return applied_total
 
@@ -803,10 +914,25 @@ async def main(gui_args=None):
         selected_roles  = get_role_choice(suggested_roles)
 
     if gui_mode:
-        apply_mode = gui_args.mode
+        apply_mode       = gui_args.mode
+        application_mode = getattr(gui_args, "application_mode", "continuous")
         print("[OK] Apply mode: %s" % apply_mode)
+        print("[OK] Application mode: %s" % application_mode)
+
+        # In one-at-a-time mode, check if total limit already reached
+        if application_mode == "one_at_a_time" and not unlimited:
+            import db.tracker as _t
+            total_so_far = _t.count_applied_total()
+            if total_so_far >= max_jobs:
+                print("[>>] One-at-a-time: already applied to %d/%d jobs. Limit reached."
+                      % (total_so_far, max_jobs))
+                return
+            remaining_jobs = max_jobs - total_so_far
+            print("[>>] One-at-a-time: %d/%d applied so far. %d remaining."
+                  % (total_so_far, max_jobs, remaining_jobs))
     else:
-        apply_mode = get_apply_mode()
+        apply_mode       = get_apply_mode()
+        application_mode = "continuous"   # CLI always runs continuous
 
     if gui_mode:
         job_location = gui_args.location or DEFAULT_LOCATION
@@ -860,6 +986,11 @@ async def main(gui_args=None):
         _session_seen = set()   # shared dedup set — persists across all role searches
 
         for role_index, job_keyword in enumerate(selected_roles, 1):
+            # One at a time mode — stop after first successful application
+            if application_mode == "one_at_a_time" and applied_total > prev_applied:
+                print("\n[>>] One-at-a-time mode: applied to 1 job. Click Start Bot for next.")
+                break
+
             if not unlimited and applied_total >= max_jobs:
                 print("\n[>>] Target of %d reached!" % max_jobs)
                 break
@@ -867,7 +998,8 @@ async def main(gui_args=None):
             if len(selected_roles) > 1:
                 print("\n\n" + "#" * 50)
                 print("# Role %d/%d: %s" % (role_index, len(selected_roles), job_keyword))
-                remaining = max_jobs - applied_total if not unlimited else "inf"
+                remaining    = max_jobs - applied_total if not unlimited else "inf"
+                prev_applied = applied_total   # track for one-at-a-time check
                 print("# Applied: %d  |  Remaining: %s" % (applied_total, remaining))
                 print("#" * 50)
 
