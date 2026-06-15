@@ -82,3 +82,5 @@ desktop.ini
 venv/
 .venv/
 env/
+crazyfolk-labs.pfx
+crazyfolk-labs.pfx.b64.txt
