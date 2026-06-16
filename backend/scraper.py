@@ -162,19 +162,40 @@ def is_internship_search(keyword: str) -> bool:
     return any(w in kw for w in ["intern", "internship", "trainee", "co-op", "placement"])
 
 
-def get_active_filters(keyword: str, apply_mode: str = "easy_apply") -> dict:
+def get_active_filters(keyword: str, apply_mode: str = "easy_apply",
+                       gui_filters: dict = None) -> dict:
+    """
+    Build search filters. GUI selections override config defaults.
+    gui_filters keys: exp_levels, job_types, workplace
+    """
     from core.config import JOB_FILTERS
     import copy
     filters = copy.deepcopy(JOB_FILTERS)
-    if apply_mode == "all":
-        filters["easy_apply_only"] = False
-    else:
-        filters["easy_apply_only"] = True
+
+    # Apply GUI overrides first
+    if gui_filters:
+        if gui_filters.get("exp_levels"):
+            filters["experience_levels"] = gui_filters["exp_levels"]
+        if gui_filters.get("job_types"):
+            filters["job_types"] = gui_filters["job_types"]
+        if gui_filters.get("workplace"):
+            filters["workplace"] = gui_filters["workplace"]
+
+    filters["easy_apply_only"] = (apply_mode != "all")
+
+    # Internship search always includes internship type
     if is_internship_search(keyword):
         if "internship" not in filters["experience_levels"]:
             filters["experience_levels"].insert(0, "internship")
         if "internship" not in filters["job_types"]:
             filters["job_types"].append("internship")
+
+    # Log what filters are active so users can see why results are limited
+    print(f"   [FILTERS] Job types: {filters['job_types']}")
+    print(f"   [FILTERS] Exp levels: {filters['experience_levels']}")
+    print(f"   [FILTERS] Date: {filters.get('date_posted','any')}")
+    print(f"   [FILTERS] Easy Apply: {filters['easy_apply_only']}")
+
     return filters
 
 
@@ -345,18 +366,61 @@ async def collect_job_cards_human_way(page, keyword) -> list:
     return relevant_cards
 
 
+async def _page_has_error(page) -> str:
+    """
+    Detect LinkedIn error/empty pages. Returns reason string or empty string if OK.
+    """
+    try:
+        content = await page.content()
+        # "Unfortunately, things aren't loading" — LinkedIn CDN issue
+        if "things aren" in content and "loading" in content:
+            return "linkedin_loading_error"
+        # "No matching jobs found"
+        if "No matching jobs found" in content:
+            return "no_results"
+        # Authwall / login required
+        if "authwall" in page.url or "/login" in page.url:
+            return "auth_required"
+        # Generic error
+        if await page.query_selector(".jobs-search-no-results-banner"):
+            return "no_results"
+    except Exception:
+        pass
+    return ""
+
+
 async def scrape_page_human_way(page, keyword, location, filters, start):
     """
     Navigates to search page and scrolls to load cards.
-    Returns list of clickable card elements.
+    Returns list of clickable card elements, or "NO_RESULTS" sentinel.
     """
     url = build_search_url(keyword, location, filters, start=start)
     await _human_pause(800, 1500)
-    await page.goto(url, wait_until="domcontentloaded")
-    await _human_pause(3000, 5000)
 
-    if await page.query_selector(".jobs-search-no-results-banner"):
-        return []
+    # Try up to 3 times on loading errors
+    for _attempt in range(3):
+        await page.goto(url, wait_until="domcontentloaded")
+        await _human_pause(3000, 5000)
+
+        page_err = await _page_has_error(page)
+        if page_err == "no_results":
+            return "NO_RESULTS"   # sentinel — caller should stop pagination
+        if page_err == "auth_required":
+            print("   [WARN]  LinkedIn auth required — check login status")
+            return []
+        if page_err == "linkedin_loading_error":
+            print(f"   [WARN]  LinkedIn loading error (attempt {_attempt+1}/3) — retrying...")
+            await _human_pause(5000, 8000)
+            await page.reload(wait_until="domcontentloaded")
+            await _human_pause(3000, 5000)
+            page_err2 = await _page_has_error(page)
+            if not page_err2:
+                break   # retry succeeded
+            if _attempt == 2:
+                print("   [WARN]  LinkedIn still not loading after 3 attempts — skipping page")
+                return []
+            continue
+        break   # page looks OK
 
     # Scroll naturally to load all cards
     for _ in range(random.randint(3, 5)):
@@ -406,9 +470,42 @@ async def click_job_card_and_get_details(page, card_data: dict) -> dict:
                 continue
         
         if not details_loaded:
-            print(f"   [WARN]  Details panel didn't load")
-            return None
+            # Try once more — reload the page section and click again
+            print(f"   [WARN]  Details panel didn't load — retrying click...")
+            await _human_pause(2000, 3000)
+            try:
+                await card.click()
+                await _human_pause(3000, 4000)
+                for selector in [".jobs-details", ".jobs-unified-top-card", ".job-view-layout"]:
+                    try:
+                        await page.wait_for_selector(selector, timeout=5000)
+                        details_loaded = True
+                        break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            if not details_loaded:
+                print(f"   [WARN]  Details panel still didn't load — skipping")
+                return None
         
+        # Check for "things aren't loading" in the details panel
+        try:
+            panel_text = await page.inner_text(".jobs-details") or ""
+            if "things aren" in panel_text.lower() or "having issues loading" in panel_text.lower():
+                print(f"   [WARN]  Details panel shows loading error — retrying in 5s...")
+                await _human_pause(5000, 7000)
+                await page.reload(wait_until="domcontentloaded")
+                await _human_pause(3000, 5000)
+                # Try clicking the card again after reload
+                try:
+                    await card.click()
+                    await _human_pause(3000, 4000)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         # Scroll to read description (human behavior)
         await _human_pause(500, 1000)
         await _human_scroll(page, random.randint(200, 400))
@@ -598,7 +695,9 @@ async def get_job_description_human_way(page) -> str:
 
 # -- Continuous Job Search Generator -----------------------------
 
-async def continuous_job_search(page, keyword: str, location: str, apply_mode: str = "easy_apply"):
+async def continuous_job_search(page, keyword: str, location: str,
+                               apply_mode: str = "easy_apply",
+                               gui_filters: dict = None):
     """
     Async generator that yields jobs one at a time.
     Clicks cards like a human, reads details naturally.
@@ -607,7 +706,7 @@ async def continuous_job_search(page, keyword: str, location: str, apply_mode: s
     previous runs are skipped -- the bot remembers across restarts,
     not just within a single run.
     """
-    filters     = get_active_filters(keyword, apply_mode)
+    filters     = get_active_filters(keyword, apply_mode, gui_filters=gui_filters)
 
     # Seed with jobs already logged in past runs (applied/skipped/failed)
     try:
@@ -650,16 +749,18 @@ async def continuous_job_search(page, keyword: str, location: str, apply_mode: s
             await asyncio.sleep(5)
             continue
 
+        if cards == "NO_RESULTS":
+            print(f"\n   [DONE] LinkedIn: no more jobs for '{keyword}' (page exhausted)")
+            return   # stop generator — no more pages
         if not cards:
             empty_pages += 1
             print(f"   [WARN]  No new jobs ({empty_pages}/{max_empty} empty pages)")
             if empty_pages >= max_empty:
                 print(f"\n   [DONE] LinkedIn results exhausted for '{keyword}'.")
-                print(f"   All available jobs have been processed.")
-                return   # stop generator — orchestrator moves to next role
+                return
         else:
             empty_pages = 0
-            print(f"   [OK] Processing {len(cards)} jobs...")
+            print(f"   [OK] Clicking through {len(cards)} jobs on this page...")
 
             for card_data in cards:
                 # Click card and get full details

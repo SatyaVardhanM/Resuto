@@ -260,6 +260,7 @@ async def run_applications(
     my_profile,
     global_seen: set = None,
     application_mode: str = "continuous",
+    gui_filters: dict = None,
 ) -> int:
     import db.tracker as tracker
     from api.resume_gen import batch_generate_resumes
@@ -299,7 +300,8 @@ async def run_applications(
 
     try:
         async for job in continuous_job_search(
-            page, job_keyword, job_location, apply_mode
+            page, job_keyword, job_location, apply_mode,
+            gui_filters=gui_filters,
         ):
 
             # FIX Issue 3: break on scan cap to prevent infinite loop
@@ -950,6 +952,24 @@ async def main(gui_args=None):
     if gui_mode:
         apply_mode       = gui_args.mode
         application_mode = getattr(gui_args, "application_mode", "continuous")
+
+        # Build gui_filters from GUI selections — override config defaults
+        _exp_map  = {"1":"internship","2":"entry","3":"associate","4":"mid_senior","5":"director","6":"executive"}
+        _jt_map   = {"F":"full_time","P":"part_time","C":"contract","T":"temporary","I":"internship","V":"volunteer"}
+        _raw_exp  = getattr(gui_args, "exp_levels",  []) or []
+        _raw_jt   = getattr(gui_args, "job_types",   []) or []
+        _raw_wp   = getattr(gui_args, "workplace",   []) or []
+        _wp_map   = {"1":"on_site","2":"remote","3":"hybrid"}
+
+        gui_filters = {
+            "exp_levels": [_exp_map[e] for e in _raw_exp if e in _exp_map] or None,
+            "job_types":  [_jt_map[j] for j in _raw_jt if j in _jt_map]  or None,
+            "workplace":  [_wp_map[w] for w in _raw_wp if w in _wp_map]   or None,
+        }
+        # Remove None values so get_active_filters uses config defaults for unset
+        gui_filters = {k:v for k,v in gui_filters.items() if v}
+        if gui_filters:
+            log("GUI filter overrides: %s" % gui_filters)
         max_jobs         = gui_args.max_jobs      # must be defined before one_at_a_time check
         unlimited        = max_jobs == 0
         print("[OK] Apply mode: %s" % apply_mode)
@@ -1157,6 +1177,7 @@ async def main(gui_args=None):
                 apply_mode    = apply_mode,
                 my_profile    = my_profile,
                 global_seen   = _session_seen,  # shared across all roles
+                gui_filters   = gui_filters if gui_mode else None,
             )
 
         print("\n" + "=" * 50)
