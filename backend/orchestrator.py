@@ -1004,6 +1004,67 @@ async def main(gui_args=None):
     out_path("resumes", "docx")
     out_path("resumes", "pdf")
 
+    # Pre-load python DLL + add exe dir to DLL search path
+    # Fixes: LoadLibraryExW _greenlet.pyd "module not found" in Nuitka standalone
+    try:
+        import ctypes as _ct, sys as _sys2, os as _os2
+        _exe_dir = _os2.path.dirname(_sys2.executable)
+
+        # Add exe directory to Windows DLL search path (Python 3.8+)
+        if hasattr(_os2, "add_dll_directory"):
+            _os2.add_dll_directory(_exe_dir)
+            # Also add any subdirs that contain .pyd files
+            for _sd in _os2.listdir(_exe_dir):
+                _sdp = _os2.path.join(_exe_dir, _sd)
+                if _os2.path.isdir(_sdp) and any(
+                    f.endswith(".pyd") for f in _os2.listdir(_sdp)
+                ):
+                    _os2.add_dll_directory(_sdp)
+
+        # Pre-load python DLL into process cache
+        _py_dll = "python%d%d.dll" % (_sys2.version_info.major, _sys2.version_info.minor)
+        for _loc in [_exe_dir,
+                     _os2.path.join(_exe_dir, "greenlet"),
+                     _os2.path.join(_os2.environ.get("SystemRoot","C:\\Windows"), "System32")]:
+            _full = _os2.path.join(_loc, _py_dll)
+            if _os2.path.exists(_full):
+                _ct.CDLL(_full)
+                log("Pre-loaded %s from %s" % (_py_dll, _loc))
+                break
+    except Exception as _dll_e:
+        log_warn("DLL pre-load warning: %s" % _dll_e)
+
+    # Inject pure-Python greenlet stub if C extension unavailable
+    # This lets playwright import succeed — async mode never calls greenlet at runtime
+    try:
+        import greenlet as _gl_test
+        _gl_test.getcurrent   # test it works
+    except (ImportError, OSError, AttributeError):
+        import sys as _sys3, types as _types
+        _gl_stub = _types.ModuleType("greenlet")
+        _gl_stub.__version__ = "stub"
+
+        class _GreenletExit(BaseException): pass
+        class _GreenletError(Exception): pass
+        class _Greenlet:
+            def __init__(self, run=None, parent=None):
+                self.run = run
+            def switch(self, *a, **k):
+                return self.run(*a, **k) if self.run else None
+            dead = False
+            gr_frame = None
+
+        _gl_stub.greenlet        = _Greenlet
+        _gl_stub.GreenletExit    = _GreenletExit
+        _gl_stub.error           = _GreenletError
+        _gl_stub.getcurrent      = lambda: None
+        _gl_stub.settrace        = lambda cb: None
+        _gl_stub.gettrace        = lambda: None
+        _gl_stub.GREENLET_USE_CONTEXT_VARS = False
+        _sys3.modules["greenlet"]            = _gl_stub
+        _sys3.modules["greenlet._greenlet"]  = _gl_stub
+        log("Greenlet C extension unavailable — using pure-Python stub (async mode OK)")
+
     # Lazy import — only load playwright when bot actually runs
     try:
         from playwright.async_api import async_playwright
