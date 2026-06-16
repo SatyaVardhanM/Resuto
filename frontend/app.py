@@ -41,7 +41,7 @@ def _get_bot_script() -> Path:
     Works both from source and inside a PyInstaller bundle.
     """
     if getattr(sys, "frozen", False):
-        base = Path(sys._MEIPASS)
+        base = Path(sys.executable).parent
     else:
         base = Path(__file__).parent.parent
 
@@ -2791,7 +2791,6 @@ class App(ctk.CTk):
             self._nav(1)
 
     def _handle_done(self, code: int):
-        # If we're mid-restart, the old runner exiting is expected — ignore it
         if getattr(self, "_restarting", False):
             return
         self._live = False
@@ -2800,14 +2799,31 @@ class App(ctk.CTk):
         self._hide_action_bar()
         self._act_strip.grid_forget()
         self._act_strip_visible = False
-        ok = code == 0
-        self._set_phase("Run complete" if ok else "Ended with errors")
-        self._set_status(f"Finished (exit {code}). {self._err_count} issue(s).")
+        ok = (code == 0)
+
+        if ok:
+            self._set_phase("Run complete")
+            self._set_status("Finished. %d issue(s)." % self._err_count)
+        else:
+            self._set_phase("Stopped with errors")
+            self._set_status("Exit code %d. Check Errors tab." % code)
+            if self._err_count == 0:
+                msg = (
+                    "Bot process exited unexpectedly (code %d).\n"
+                    "Check the log file for details.\n"
+                    "Common causes: Chrome profile locked, "
+                    "internet issue, or import error in bot subprocess."
+                ) % code
+                self._append_error(msg)
+
         self._stats_last_hash = None
         self._refresh_stats()
         self._show_step(3)
-        if self._err_count == 0: self._nav(2)
-        else: self._nav(1)
+
+        if self._err_count > 0 or not ok:
+            self._nav(1)
+        else:
+            self._nav(2)
 
     # ── Helpers ────────────────────────────────────────────────────
     def _set_status(self, t: str):
@@ -5127,27 +5143,49 @@ if __name__ == "__main__":
     if "--bot-mode" in sys.argv:
         sys.argv.remove("--bot-mode")
         import asyncio
-        # Add project root to path so orchestrator imports work
-        _bot_root = Path(sys._MEIPASS) if getattr(sys, "frozen", False)                     else Path(__file__).parent.parent
-        sys.path.insert(0, str(_bot_root))
-        from backend.orchestrator import main as _bot_main
+
+        # Nuitka compiled: all modules built in, no path manipulation needed
+        # Just ensure the exe's directory is in sys.path for data-dir bundles
+        if getattr(sys, "frozen", False):
+            _root = str(Path(sys.executable).parent)
+            if _root not in sys.path:
+                sys.path.insert(0, _root)
+        else:
+            _root = str(Path(__file__).parent.parent)
+            if _root not in sys.path:
+                sys.path.insert(0, _root)
+
+        def _getarg(flag, default=""):
+            try: return sys.argv[sys.argv.index(flag) + 1]
+            except (ValueError, IndexError): return default
+
         try:
-            asyncio.run(_bot_main(gui_args=type("A", (), {
-                "gui":        True,
-                "location":   next((sys.argv[sys.argv.index("--location")+1]
-                               for _ in [0] if "--location" in sys.argv), ""),
-                "max_jobs":   int(next((sys.argv[sys.argv.index("--max-jobs")+1]
-                               for _ in [0] if "--max-jobs" in sys.argv), 5)),
-                "mode":       next((sys.argv[sys.argv.index("--mode")+1]
-                               for _ in [0] if "--mode" in sys.argv), "easy_apply"),
-                "roles":      sys.argv[sys.argv.index("--roles")+1:]
-                               if "--roles" in sys.argv else [],
-                "clear_runs":        "--clear-runs" in sys.argv,
-                "application_mode":  get_settings().get("application_mode", "continuous"),
-            })()))
+            from backend.orchestrator import main as _bot_main
+            from core.settings import get_settings as _gs2
+
+            gui_args = type("A", (), {
+                "gui":              True,
+                "location":         _getarg("--location", ""),
+                "max_jobs":         int(_getarg("--max-jobs", "5") or "5"),
+                "mode":             _getarg("--mode", "easy_apply"),
+                "roles":            sys.argv[sys.argv.index("--roles") + 1:]
+                                    if "--roles" in sys.argv else [],
+                "clear_runs":       "--clear-runs" in sys.argv,
+                "application_mode": _gs2().get("application_mode", "continuous"),
+            })()
+
+            asyncio.run(_bot_main(gui_args=gui_args))
+
         except (KeyboardInterrupt, EOFError):
             pass
+        except Exception as _err:
+            import traceback as _tb
+            print("[!!] Bot subprocess crashed: " + str(_err), flush=True)
+            print(_tb.format_exc(), flush=True)
+            sys.exit(1)
+
         sys.exit(0)
+
 
     # ── Normal GUI mode ───────────────────────────────────────────
     log = Path(__file__).parent.parent / "app_error.log"
