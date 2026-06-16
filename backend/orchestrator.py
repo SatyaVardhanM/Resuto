@@ -21,25 +21,15 @@ try:
 except ImportError as _e:
     raise ImportError(f"anthropic not installed or bundled: {_e}") from _e
 
-try:
-    from playwright.async_api import async_playwright
-except ImportError as _e:
-    raise ImportError(f"playwright not installed or bundled: {_e}") from _e
+# playwright imported lazily inside main() — avoids crash on module load
+async_playwright = None   # populated at runtime
 
-try:
-    from backend.scraper import continuous_job_search
-except ImportError as _e:
-    raise ImportError(f"backend.scraper import failed: {_e}") from _e
-
-try:
-    from backend.browser import create_logged_in_context, minimize_browser
-except ImportError as _e:
-    raise ImportError(f"backend.browser import failed: {_e}") from _e
-
-try:
-    from api.filter import check_job_relevance, print_relevance_report
-except ImportError as _e:
-    raise ImportError(f"api.filter import failed: {_e}") from _e
+# Lazy imports - resolved at runtime after sys.path is confirmed
+continuous_job_search        = None
+create_logged_in_context     = None
+minimize_browser             = None
+check_job_relevance          = None
+print_relevance_report       = None
 # New pipeline stage modules — imported with fallback so old installs
 # continue to work even if these files are missing.
 try:
@@ -760,6 +750,16 @@ async def run_phase2_only(job_ids: list = None, gui_mode: bool = True):
     from datetime import datetime as _dt
     global SESSION_START
     SESSION_START = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Lazy imports — resolved here so module-level import never crashes
+    try:
+        from backend.scraper import continuous_job_search
+        from backend.browser import create_logged_in_context, minimize_browser
+        from api.filter   import check_job_relevance, print_relevance_report
+    except ImportError as _ie:
+        print(f"[!!] Import failed in main(): {_ie}", flush=True)
+        log_error("Import failed in main(): %s" % _ie)
+        raise
     log_section("Bot started — Phase 2 only mode")
     log("Session start: %s" % SESSION_START)
     log("Target job IDs: %s" % (job_ids or "all unprocessed matched"))
@@ -1003,6 +1003,15 @@ async def main(gui_args=None):
 
     out_path("resumes", "docx")
     out_path("resumes", "pdf")
+
+    # Lazy import — only load playwright when bot actually runs
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError as _e:
+        raise RuntimeError(
+            "Playwright not found. Run: resuto.exe --install-browsers\n"
+            f"Details: {_e}"
+        ) from _e
 
     async with async_playwright() as playwright:
         browser, context, page = await create_logged_in_context(playwright)
