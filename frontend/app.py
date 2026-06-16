@@ -2577,11 +2577,10 @@ class App(ctk.CTk):
         self._runner.start()
 
     def _stop(self):
+        self._user_stopped = True   # flag: user initiated stop, not a crash
         if self._runner:
-            # Send a line to stdin so main.py's readline() unblocks
-            # and closes the browser before the process is terminated
             self._runner.send("stop")
-            self.after(500, self._force_stop)   # give 500ms then hard-terminate
+            self.after(500, self._force_stop)
         self._live = False
         # session_start stays set — Recent keeps showing this session's jobs
         self._live_dot.configure(text_color=MUTED)
@@ -2990,20 +2989,27 @@ class App(ctk.CTk):
     def _handle_done(self, code: int):
         if getattr(self, "_restarting", False):
             return
-        # Flush any buffered traceback that didn't get a final error line
+        # Flush any buffered traceback
         if getattr(self, "_tb_active", False) and self._tb_buffer:
             self._append_error("\n".join(self._tb_buffer))
             self._tb_buffer = []
             self._tb_active = False
+
         self._live = False
         self._live_dot.configure(text_color=MUTED)
         self._stop_btn.pack_forget()
         self._hide_action_bar()
         self._act_strip.grid_forget()
         self._act_strip_visible = False
-        ok = (code == 0)
 
-        if ok:
+        user_stopped = getattr(self, "_user_stopped", False)
+        self._user_stopped = False  # reset flag
+        ok = (code == 0) or user_stopped  # user stop is not an error
+
+        if user_stopped:
+            self._set_phase("Stopped")
+            self._set_status("Stopped by user.")
+        elif ok:
             self._set_phase("Run complete")
             self._set_status("Finished. %d issue(s)." % self._err_count)
         else:
@@ -3022,10 +3028,10 @@ class App(ctk.CTk):
         self._refresh_stats()
         self._show_step(3)
 
-        if self._err_count > 0 or not ok:
-            self._nav(1)
+        if not ok and self._err_count > 0:
+            self._nav(1)   # errors tab — only if actual errors logged
         else:
-            self._nav(2)
+            self._nav(2)   # history tab
 
     # ── Helpers ────────────────────────────────────────────────────
     def _set_status(self, t: str):
