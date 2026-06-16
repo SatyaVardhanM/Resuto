@@ -71,6 +71,7 @@ ACCENT_HV = "#4A58D4"   # hover shade
 DANGER    = "#E84545"
 SUCCESS   = "#22C55E"
 WARNING   = "#F59E0B"
+STRETCH   = "#F59E0B"   # amber — same as WARNING
 MUTED     = "#6B7280"
 FG        = "#F1F2F4"
 FG_SOFT   = "#C8CBD2"
@@ -428,7 +429,7 @@ class App(ctk.CTk):
             from core.license import is_approved
             try:
                 _license_ok = is_approved()
-            except Exception as _chk_err:
+            except Exception:
                 # is_approved() failed (e.g. no internet, sheet error)
                 # Treat as not approved — show registration
                 _license_ok = False
@@ -602,7 +603,6 @@ class App(ctk.CTk):
         order = ("run", "errors", "stats", "history", "settings")
 
         # Track which tab is active to debounce history loads
-        prev = getattr(self, "_active_tab", -1)
         self._active_tab = idx
 
         for i, name in enumerate(order):
@@ -891,7 +891,6 @@ class App(ctk.CTk):
             skills  = [s for v in _mp.get("skills",{}).values() for s in v]
             years   = _mp.get("years_experience", "unknown")
             summary = _mp.get("summary", "")
-            title   = _mp.get("current_title", "")
             exp     = _mp.get("experience", [])
             exp_str = "; ".join(
                 f"{j.get('title','')} at {j.get('company','')}"
@@ -2193,7 +2192,7 @@ class App(ctk.CTk):
             text_color="#FFD580").pack(pady=(20,4))
 
         desc = (
-            "Without real metrics, Claude estimates numbers like 20% improvement. "
+            "Without real metrics, Claude estimates numbers like 20%% improvement. "
             "If a recruiter asks in an interview, you won't be able to back it up. "
             "Fill in what you remember — rough numbers are fine."
         )
@@ -2276,10 +2275,10 @@ class App(ctk.CTk):
         Claude needs real numbers to avoid fabricating them.
         """
         msg = (
-            "Tip: %d job(s) (%s) have no measurable metrics in their bullets.\n"
+            "Tip: {} job(s) ({}) have no measurable metrics in their bullets.\n"
             "Add numbers to your resume XML (scale, % improvement, team size) so\n"
             "Claude uses real data instead of estimating. Real > estimated always."
-            % (count, companies)
+            .format(count, companies)
         )
         try:
             import customtkinter as ctk
@@ -3347,7 +3346,6 @@ class App(ctk.CTk):
         """Show/hide the custom path row and update preview label."""
         # Fall back to instance vars if not passed
         row   = path_row   or getattr(self, "_chrome_path_row",   None)
-        entry = path_entry or getattr(self, "_chrome_path_entry", None)
         if not default_path:
             import sys as _s, os as _o
             default_path = (
@@ -3429,7 +3427,7 @@ class App(ctk.CTk):
             s["work_authorization"] = code
             _save_settings(s)
         except Exception as e:
-            log_warn("Could not save visa status: %s" % e)
+            print("[WARN] Could not save visa status: %s" % e)
 
         # 2. Write into resume_data.xml <meta><work_authorization>
         try:
@@ -3451,12 +3449,11 @@ class App(ctk.CTk):
                 ET.indent(tree, space="    ")
                 tree.write(xml_path, encoding="unicode", xml_declaration=True)
         except Exception as e:
-            log_warn("Could not update XML work_authorization: %s" % e)
+            print("[WARN] Could not update XML work_authorization: %s" % e)
 
         # 3. Update config at runtime so blocking phrases adjust immediately
         try:
             import core.config as _cfg
-            needs_no_sponsorship_check = code in ("US Citizen", "Green Card", "H-1B")
             _cfg.CPT_SCREENING["screen_sponsorship"] = False  # always False for CPT/OPT
             if code in ("CPT", "OPT", "STEM OPT"):
                 # CPT/OPT: drop all sponsorship blocking phrases, keep citizenship only
@@ -3617,12 +3614,17 @@ class App(ctk.CTk):
     # ── Job preferences helpers ───────────────────────────────────
 
     def _prefs_path(self) -> str:
+        """Return path to job_prefs.json — stored in Documents/Resuto/."""
         try:
             from core.settings import get_settings
             d = get_settings()
-            return str(Path(d.get("output_dir","output")) / "job_prefs.json")
+            out = d.get("output_dir", "")
+            if out and Path(out).is_dir():
+                return str(Path(out) / "job_prefs.json")
         except Exception:
-            return str(Path(__file__).parent.parent / "frontend" / "job_prefs.json")
+            pass
+        import sys as _sp
+        return str(Path(_sp.executable).parent / "job_prefs.json")
 
     def _load_job_prefs(self) -> dict:
         try:
@@ -3738,7 +3740,7 @@ class App(ctk.CTk):
 
     def _on_review_done(self):
         self._refresh_review_btn()
-        self._update_stats()
+        self._refresh_stats()
 
 # ══════════════════════════════════════════════════════════════════
 # IntakeWindow — modal Toplevel that walks the user through resume
@@ -4055,6 +4057,45 @@ Keep responses conversational — 2-5 sentences is usually right. Longer if you'
         self.title("Building your profile...")
         self._status_lbl.configure(text="Building profile from resume...")
         threading.Thread(target=self._build_xml_direct, daemon=True).start()
+
+
+    def _check_resume_metrics(self, xml_str: str) -> list:
+        """Check XML for missing fields. Returns list of missing names."""
+        import re as _re
+        missing = []
+        if not _re.search(r'<(?:years_experience|experience_years)[^>]*>[^<]{1,}', xml_str, _re.I):
+            missing.append('years_experience')
+        if not _re.search(r'<skill[s]?[^>]*>[^<]{2,}', xml_str, _re.I):
+            missing.append('skills')
+        return missing
+
+    def _show_metric_popup(self, missing: list, on_continue=None, on_edit=None):
+        """Show warning popup about missing metrics with Continue/Edit choice."""
+        import tkinter.messagebox as _mb
+        msg = (
+            "Your profile is missing some fields:\n\n" +
+            "\n".join(f"  \u2022 {f}" for f in missing) +
+            "\n\nContinue saving anyway?"
+        )
+        if _mb.askyesno("Missing Fields", msg, icon="warning"):
+            if on_continue: on_continue()
+        else:
+            if on_edit: on_edit()
+
+    def _complete_alex_save(self):
+        """Finalise save after Alex enhancement."""
+        xml = getattr(self, "_xml_str", None)
+        if xml:
+            self._on_success(xml)
+        else:
+            self._show_error("Enhancement finished but XML is empty.")
+
+    def _abort_and_edit(self):
+        """Abort save and prompt user to edit their profile."""
+        self._show_error(
+            "Please fill in the missing fields in your resume_data.xml\n"
+            "then re-upload the file."
+        )
 
     def _enhance_with_alex(self):
         """Remove the choice screen and start the chat flow."""
@@ -4385,10 +4426,10 @@ Keep responses conversational — 2-5 sentences is usually right. Longer if you'
             f"Ugh, something went wrong building the XML 😬\n\n{err}\n\n"
             "Try closing and uploading your resume again.")
 
-    def _finish(self):
-        if self._on_done:
-            self._on_done()
-        self.destroy()
+
+
+
+
 
     def _show_error(self, msg: str):
         self._status_lbl.configure(text="Error")
@@ -5078,7 +5119,7 @@ class RegistrationWindow(ctk.CTkToplevel):
             from core.license import (
                 _machine_id, send_approval_request,
                 poll_for_decision, store_decision, notify_admin_expired,
-                _fetch_from_sheet, store_decision)
+                _fetch_from_sheet)
             mid = _machine_id()
 
             # Pre-check: does this machine already have an entry in the sheet?
@@ -5311,7 +5352,7 @@ if __name__ == "__main__":
 
 
     # ── Normal GUI mode ───────────────────────────────────────────
-    log = Path(__file__).parent.parent / "app_error.log"
+    log = Path(sys.executable).parent / "app_error.log"
     try:
         app = App()
         # Only call mainloop if the window wasn't destroyed during __init__

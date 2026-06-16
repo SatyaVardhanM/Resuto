@@ -1,5 +1,5 @@
 # prompt_store.py
-from core.config import AI_MODEL, AI_MODEL_QUALITY
+from core.config import AI_MODEL_QUALITY
 """
 Manages AI prompts in a local SQLite database (prompts.db).
 
@@ -24,13 +24,18 @@ import json
 import sqlite3
 from datetime import datetime
 
+def _db_path(path=None): return _db_file(path)
+
 def _db_file() -> str:
     """Resolve prompts.db path — exe-aware."""
     import sys as _sys
     if getattr(_sys, "frozen", False):
         base = os.path.dirname(_sys.executable)
     else:
+        import sys as _sys3
         base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if not os.path.isdir(os.path.join(base, "api")):
+            base = os.path.dirname(os.path.abspath(_sys3.executable))
     data_dir = os.path.join(base, "data")
     os.makedirs(data_dir, exist_ok=True)
     return os.path.join(data_dir, "prompts.db")
@@ -116,7 +121,7 @@ def get_prompt(name: str) -> str:
 def delete_prompt(name: str) -> None:
     """Delete a prompt from the DB so it regenerates on next run."""
     try:
-        db = _db_path()
+        db = _db_file()
         con = sqlite3.connect(db)
         con.execute("DELETE FROM prompts WHERE name = ?", (name,))
         con.commit()

@@ -54,9 +54,9 @@ except ImportError:
         def stage4a_done(self, *a, **k): pass
         def stage4b_done(self, *a, **k): pass
         def log_summary(self): pass
-from db.tracker import log_application, show_stats
+from db.tracker import show_stats
 from core.settings import get_settings, out_path
-from core.config import AI_MODEL, AI_MODEL_FAST, MAX_JOBS_PER_RUN, DEFAULT_LOCATION
+from core.config import AI_MODEL, MAX_JOBS_PER_RUN, DEFAULT_LOCATION
 from core.logger import log, log_warn, log_error, log_section, log_debug, LOG_FILE
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -193,7 +193,7 @@ def _wait_for_user_action(job: dict, loop) -> str:
     Block reading stdin until user responds.
     Returns "APPLIED" or "SKIP".
     """
-    import sys, asyncio
+
 
     title   = job.get("job_title", "Unknown")
     company = job.get("company",   "Unknown")
@@ -246,7 +246,8 @@ async def run_applications(
     max_jobs, unlimited, applied_total,
     search_role, apply_mode,
     my_profile,
-    global_seen: set = None,    # shared across ALL role searches this session
+    global_seen: set = None,
+    application_mode: str = "continuous",
 ) -> int:
     import db.tracker as tracker
     from api.resume_gen import batch_generate_resumes
@@ -339,6 +340,7 @@ async def run_applications(
             # scanned_count tracks jobs that went through Claude API
             # Only scanned_count matters for the cap — pre-filtered don't use API
 
+            db_row_id = -1   # initialized before any conditional use
             job_desc = job.get("description", "")
             if not job_desc:
                 job_desc = "%s at %s in %s" % (
@@ -749,7 +751,7 @@ async def run_phase2_only(job_ids: list = None, gui_mode: bool = True):
 
     # Load profile
     try:
-        from core.settings import get_settings, get_output_dir, get_resume_data_path
+        from core.settings import get_output_dir, get_resume_data_path
         from core.profile import load_profile_from_xml
         xml_path = get_resume_data_path()
         if not xml_path or not _os.path.exists(xml_path):
@@ -764,7 +766,7 @@ async def run_phase2_only(job_ids: list = None, gui_mode: bool = True):
 
     # Build output dirs
     try:
-        from core.settings import get_output_dir
+
         base        = get_output_dir()
         output_dirs = {
             "docx": _os.path.join(base, "resumes", "docx"),
@@ -922,6 +924,8 @@ async def main(gui_args=None):
     if gui_mode:
         apply_mode       = gui_args.mode
         application_mode = getattr(gui_args, "application_mode", "continuous")
+        max_jobs         = gui_args.max_jobs      # must be defined before one_at_a_time check
+        unlimited        = max_jobs == 0
         print("[OK] Apply mode: %s" % apply_mode)
         print("[OK] Application mode: %s" % application_mode)
 
@@ -942,8 +946,6 @@ async def main(gui_args=None):
 
     if gui_mode:
         job_location = gui_args.location or DEFAULT_LOCATION
-        max_jobs     = gui_args.max_jobs
-        unlimited    = max_jobs == 0
     else:
         try:
             job_location = input("[LOC] Location? (Enter = 'United States'): ").strip()
@@ -991,6 +993,7 @@ async def main(gui_args=None):
         applied_total = 0
         _session_seen = set()   # shared dedup set — persists across all role searches
 
+        prev_applied = 0   # track applications per role for one-at-a-time mode
         for role_index, job_keyword in enumerate(selected_roles, 1):
             # One at a time mode — stop after first successful application
             if application_mode == "one_at_a_time" and applied_total > prev_applied:

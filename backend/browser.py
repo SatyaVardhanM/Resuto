@@ -34,36 +34,39 @@ def get_chrome_profile_path() -> str:
     Never share your main Chrome profile — Chrome locks profiles
     to one process, which causes launch failures.
     """
-    import sys as _s, os as _o, json as _j
+    import sys as _s, json as _j
 
     # 1. Check local_settings.json for custom path
     try:
         if getattr(_s, "frozen", False):
-            settings_file = _o.path.join(
-                _o.path.dirname(_s.executable), "local_settings.json")
+            settings_file = os.path.join(
+                os.path.dirname(_s.executable), "local_settings.json")
         else:
-            settings_file = _o.path.join(
-                _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__))),
+            settings_file = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                 "local_settings.json")
 
-        if _o.path.exists(settings_file):
+        if os.path.exists(settings_file):
             with open(settings_file, encoding="utf-8") as _f:
                 data = _j.loads(_f.read())
             custom = data.get("chrome_profile_path", "").strip()
             if custom:
-                _o.makedirs(custom, exist_ok=True)
+                os.makedirs(custom, exist_ok=True)
                 return custom
     except Exception:
         pass
 
     # 2. Default path next to exe / project root
     if getattr(_s, "frozen", False):
-        project_dir = _o.path.dirname(_s.executable)
+        project_dir = os.path.dirname(_s.executable)
     else:
-        project_dir = _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__)))
+        import sys as _sys4
+        project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if not os.path.isdir(os.path.join(project_dir, "backend")):
+            project_dir = os.path.dirname(os.path.abspath(_sys4.executable))
 
-    profile_dir = _o.path.join(project_dir, "BotChromeProfile")
-    _o.makedirs(profile_dir, exist_ok=True)
+    profile_dir = os.path.join(project_dir, "BotChromeProfile")
+    os.makedirs(profile_dir, exist_ok=True)
     return profile_dir
 
 
@@ -78,7 +81,7 @@ def _get_bundled_chromium() -> str:
 
     Returns the full path to the Chromium executable, or "" if not found.
     """
-    import sys as _sys, os as _o, glob as _glob, platform as _plat
+    import sys as _sys, glob as _glob, platform as _plat
     if not getattr(_sys, "frozen", False):
         return ""
 
@@ -87,18 +90,18 @@ def _get_bundled_chromium() -> str:
     if system == "Darwin":
         # On Mac the .app bundle itself is read-only.
         # We copy the bundled Chromium to a writable location on first run.
-        support_dir = _o.path.join(
-            _o.path.expanduser("~"), "Library",
+        support_dir = os.path.join(
+            os.path.expanduser("~"), "Library",
             "Application Support", "Resuto", "chromium")
-        chrome_path = _o.path.join(support_dir, "Chromium")
+        chrome_path = os.path.join(support_dir, "Chromium")
 
-        if not _o.path.exists(chrome_path):
+        if not os.path.exists(chrome_path):
             # First run — copy from inside the .app bundle
             # sys.executable = .../Resuto.app/Contents/MacOS/Resuto
             # bundled files   = .../Resuto.app/Contents/MacOS/app/
-            bundle_base = _o.path.join(
-                _o.path.dirname(_sys.executable), "app")
-            pattern = _o.path.join(
+            bundle_base = os.path.join(
+                os.path.dirname(_sys.executable), "app")
+            pattern = os.path.join(
                 bundle_base, "data", "playwright_driver",
                 "package", ".local-browsers",
                 "chromium-*", "chrome-mac",
@@ -106,20 +109,20 @@ def _get_bundled_chromium() -> str:
             matches = _glob.glob(pattern)
             if matches:
                 import shutil as _sh
-                _o.makedirs(support_dir, exist_ok=True)
+                os.makedirs(support_dir, exist_ok=True)
                 _sh.copy2(matches[0], chrome_path)
                 # Make it executable — Mac strips execute bits on copy
                 import stat as _stat
-                _o.chmod(chrome_path,
-                         _o.stat(chrome_path).st_mode | _stat.S_IEXEC
+                os.chmod(chrome_path,
+                         os.stat(chrome_path).st_mode | _stat.S_IEXEC
                          | _stat.S_IXGRP | _stat.S_IXOTH)
 
-        return chrome_path if _o.path.exists(chrome_path) else ""
+        return chrome_path if os.path.exists(chrome_path) else ""
 
     elif system == "Windows":
         # Windows exe is in a writable folder — use directly
-        base = _o.path.dirname(_sys.executable)
-        pattern = _o.path.join(base, "data", "playwright_driver",
+        base = os.path.dirname(_sys.executable)
+        pattern = os.path.join(base, "data", "playwright_driver",
                                "package", ".local-browsers",
                                "chromium-*", "chrome-win", "chrome.exe")
         matches = _glob.glob(pattern)
@@ -127,16 +130,16 @@ def _get_bundled_chromium() -> str:
 
     else:
         # Linux
-        base = _o.path.dirname(_sys.executable)
-        pattern = _o.path.join(base, "data", "playwright_driver",
+        base = os.path.dirname(_sys.executable)
+        pattern = os.path.join(base, "data", "playwright_driver",
                                "package", ".local-browsers",
                                "chromium-*", "chrome-linux", "chrome")
         matches = _glob.glob(pattern)
         path = matches[0] if matches else ""
-        if path and _o.path.exists(path):
+        if path and os.path.exists(path):
             import stat as _stat
-            _o.chmod(path,
-                     _o.stat(path).st_mode | _stat.S_IEXEC
+            os.chmod(path,
+                     os.stat(path).st_mode | _stat.S_IEXEC
                      | _stat.S_IXGRP | _stat.S_IXOTH)
         return path
 
@@ -147,7 +150,7 @@ def get_chrome_executable():
 
     # In exe: use bundled Chromium first
     bundled = _get_bundled_chromium()
-    if bundled and _o.path.exists(bundled):
+    if bundled and os.path.exists(bundled):
         return bundled
     system = _plat.system()
     if system == "Windows":
@@ -222,7 +225,7 @@ async def create_logged_in_context(playwright):
         "--disable-popup-blocking",
     ]
 
-    print(f"\n   [...] Launching the bot's Chrome profile...")
+    print("\n   [...] Launching the bot's Chrome profile...")
 
     context = None
     # Prefer the real Chrome executable; fall back to bundled Chromium.
@@ -242,7 +245,7 @@ async def create_logged_in_context(playwright):
             log("Browser launched: %s" % label)
             print(f"   [OK] {label} launched with the bot profile.")
             break
-        except Exception as e:
+        except Exception:
             print(f"   [WARN]  {label} not available, trying next option...")
 
     if context is None:
@@ -257,7 +260,7 @@ async def create_logged_in_context(playwright):
     page = await _setup_page(context)
 
     # Check whether this profile is already logged into LinkedIn.
-    print(f"   [CHECK] Checking LinkedIn session...")
+    print("   [CHECK] Checking LinkedIn session...")
     try:
         await page.goto("https://www.linkedin.com/feed/",
                          wait_until="domcontentloaded", timeout=30000)
@@ -265,10 +268,10 @@ async def create_logged_in_context(playwright):
         pass
 
     if "login" in page.url or "/uas/" in page.url or "authwall" in page.url:
-        print(f"\n   [AUTH] Please log into LinkedIn in the browser window.")
-        print(f"      This is a one-time step - the bot profile will")
-        print(f"      stay logged in for future runs.")
-        print(f"      Waiting up to 3 minutes...")
+        print("\n   [AUTH] Please log into LinkedIn in the browser window.")
+        print("      This is a one-time step - the bot profile will")
+        print("      stay logged in for future runs.")
+        print("      Waiting up to 3 minutes...")
         logged_in = False
         for _ in range(180):
             if any(seg in page.url for seg in _LOGGED_IN_SEGMENTS):
@@ -277,7 +280,7 @@ async def create_logged_in_context(playwright):
             await asyncio.sleep(1)
         if logged_in:
             log("LinkedIn: logged in successfully")
-            print(f"   [OK] Logged in - session saved for next time.\n")
+            print("   [OK] Logged in - session saved for next time.\n")
         else:
             log_error("LinkedIn login timed out")
             await context.close()
@@ -287,7 +290,7 @@ async def create_logged_in_context(playwright):
             )
     else:
         log("LinkedIn: already logged in")
-    print(f"   [OK] Already logged into LinkedIn.\n")
+    print("   [OK] Already logged into LinkedIn.\n")
 
     return context, context, page
 
@@ -451,7 +454,7 @@ async def _easy_apply_same_page(page, job: dict, pdf_path: str) -> tuple:
     }
 
     try:
-        print(f"   [!] Easy Apply: Looking for button...")
+        print("   [!] Easy Apply: Looking for button...")
         
         # Check if already applied
         already_selectors = [
@@ -461,7 +464,7 @@ async def _easy_apply_same_page(page, job: dict, pdf_path: str) -> tuple:
         ]
         for selector in already_selectors:
             if await page.query_selector(selector):
-                print(f"   [WARN]  Already applied")
+                print("   [WARN]  Already applied")
                 debug_info["failure_reason"] = "Already applied"
                 return (False, debug_info)
 
@@ -489,7 +492,7 @@ async def _easy_apply_same_page(page, job: dict, pdf_path: str) -> tuple:
 
         if not easy_apply_btn:
             debug_info["failure_reason"] = "Button not found"
-            print(f"   [ERR] No Easy Apply button")
+            print("   [ERR] No Easy Apply button")
             screenshot_path = await _save_screenshot(page, "no_button", job)
             debug_info["screenshot_path"] = screenshot_path
             return (False, debug_info)
@@ -498,7 +501,7 @@ async def _easy_apply_same_page(page, job: dict, pdf_path: str) -> tuple:
         await easy_apply_btn.scroll_into_view_if_needed()
         await _human_pause(500, 1000)
         
-        print(f"   [MOUSE]  Clicking Easy Apply...")
+        print("   [MOUSE]  Clicking Easy Apply...")
         await easy_apply_btn.click()
         
         # Wait a moment for animation
@@ -509,8 +512,8 @@ async def _easy_apply_same_page(page, job: dict, pdf_path: str) -> tuple:
 
         if not modal:
             debug_info["failure_reason"] = "Modal not found after click"
-            print(f"   [ERR] Modal didn't open or couldn't be detected")
-            print(f"   [IMG] Saving screenshot for debugging...")
+            print("   [ERR] Modal didn't open or couldn't be detected")
+            print("   [IMG] Saving screenshot for debugging...")
             screenshot_path = await _save_screenshot(page, "no_modal", job)
             debug_info["screenshot_path"] = screenshot_path
             
@@ -602,7 +605,7 @@ async def _easy_apply_same_page(page, job: dict, pdf_path: str) -> tuple:
 
 async def _external_apply_same_page(page, job: dict, pdf_path: str) -> tuple:
     debug_info = {"easy_apply_detected": False, "failure_reason": "External"}
-    print(f"   [WEB] External job")
+    print("   [WEB] External job")
     return (True, debug_info)
 
 
@@ -747,27 +750,27 @@ async def guided_apply_session(context: BrowserContext, jobs: list,
             # Browser was closed by user — stop the session cleanly
             if any(x in err_str for x in ("context was destroyed", "target closed",
                                            "browser has been closed", "connection closed")):
-                print(f"\n   [OK] Browser was closed -- ending session.")
+                print("\n   [OK] Browser was closed -- ending session.")
                 break
             print(f"   [WARN]  Could not open the job page: {e}")
             skipped += 1
             continue
 
-        print(f"\n   [WAIT]   YOUR TURN -- the job is open in the browser")
+        print("\n   [WAIT]   YOUR TURN -- the job is open in the browser")
         if pdf:
             print(f"   Resume : {pdf}")
-            print(f"        (upload this file when the form asks for a resume)")
-        print(f"   [>>] Apply in the browser window. The bot will wait here.")
+            print("        (upload this file when the form asks for a resume)")
+        print("   [>>] Apply in the browser window. The bot will wait here.")
         print()
         is_last = (i == total)
         next_lbl = "finish" if is_last else "go to next"
-        print(f"   When done, type and press Enter:")
+        print("   When done, type and press Enter:")
         print(f"      [d] done   - applied, {next_lbl}")
         print(f"      [s] skip   - did not apply, {next_lbl}")
         if not is_last:
-            print(f"      [q] quit   - stop the session")
+            print("      [q] quit   - stop the session")
         else:
-            print(f"      [q] quit   - same as finish")
+            print("      [q] quit   - same as finish")
 
         choice = await _ask_user_choice(
             "   Your choice [d / s / q]: ", ("d", "s", "q", "done", "skip", "quit")
@@ -809,7 +812,7 @@ async def guided_apply_session(context: BrowserContext, jobs: list,
                 print("      [n] for now    - ask again next run")
                 print("      [f] forever    - never ask again")
                 sk = await _ask_user_choice(
-                    "   [n / f]: ", ("n", "f", "now", "forever")
+                    "   [n / f]: ", ("n", "", "now", "forever")
                 )
                 tracker.set_skip_status(job["job_url"], 0 if sk in ("n", "now") else 1)
                 print("   [SKIP]  Noted.")

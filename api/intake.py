@@ -1,3 +1,4 @@
+import anthropic
 # api/intake.py — Resume intake and profile generation
 import sys as _sys, os as _os
 if not getattr(_sys, "frozen", False):
@@ -93,7 +94,7 @@ def call_api(messages: list, system: str = "", max_tokens: int = 4000) -> str:
 
         except Exception as e:
             print("\n" + "=" * 60)
-            print(f"  [WARN]   API CONNECTION ISSUE")
+            print("  [WARN]   API CONNECTION ISSUE")
             print(f"  Error: {str(e)[:120]}")
             print("  Your progress so far is saved.")
             print("=" * 60)
@@ -145,10 +146,10 @@ def read_pdf(path: str) -> str:
         with open(path, "rb") as _f:
             header = _f.read(4)
         if header != b"%PDF":
-            ext = _os.path.splitext(path)[1].lower()
+            # ext = _os.path.splitext(path)[1].lower()
             return (f"{_PDF_ERROR_PREFIX}This doesn't look like a PDF file "
                     f"(got {header!r}). "
-                    f"Please select a valid .pdf file.")
+                    "Please select a valid .pdf file.")
     except Exception as e:
         return f"{_PDF_ERROR_PREFIX}Could not open file: {e}"
 
@@ -198,7 +199,7 @@ def read_pdf(path: str) -> str:
         if "password" in err or "encrypted" in err:
             return (f"{_PDF_ERROR_PREFIX}PDF is password-protected. "
                     "Remove the password and try again.")
-        if "eof" in err or "invalid" in err or "corrupt" in err:
+        if "eo" in err or "invalid" in err or "corrupt" in err:
             return f"{_PDF_ERROR_PREFIX}PDF appears corrupted or truncated: {e}"
         return f"{_PDF_ERROR_PREFIX}Could not read PDF: {e}"
 
@@ -254,7 +255,7 @@ def generate_questions(resume_text: str) -> list:
     from api.prompts import get_prompt, PROMPT_INTAKE_QUESTIONS
     system = get_prompt(PROMPT_INTAKE_QUESTIONS)
 
-    prompt = f"""Here is the resume text:
+    prompt = """Here is the resume text:
 
 ---
 {resume_text}
@@ -300,8 +301,8 @@ def ask_questions(questions: list) -> list:
 
     print(f"\n{'='*60}")
     print(f"  [>>] {total} question(s) to answer")
-    print(f"  Type your answer and press Enter.")
-    print(f"  Type 'skip' to skip a question.")
+    print("  Type your answer and press Enter.")
+    print("  Type 'skip' to skip a question.")
     print(f"{'='*60}\n")
 
     for q in questions:
@@ -340,7 +341,7 @@ def generate_xml(resume_text: str, qa_pairs: list) -> str:
     """
     print("\n  [AI] Generating resume_data.xml...")
 
-    qa_text = "\n".join(
+    _ = "\n".join(
         f"Q: {pair['question']}\nA: {pair['answer']}"
         for pair in qa_pairs
     )
@@ -348,7 +349,7 @@ def generate_xml(resume_text: str, qa_pairs: list) -> str:
     from api.prompts import get_prompt, PROMPT_INTAKE_XML
     system = get_prompt(PROMPT_INTAKE_XML)
 
-    prompt = f"""Here is the resume:
+    prompt = """Here is the resume:
 
 ---
 {resume_text}
@@ -417,12 +418,12 @@ def enhance_experience(xml_path: str) -> str:
     from api.prompts import get_prompt, PROMPT_EXPERIENCE_ENHANCE
 
     print(f"\n{'='*60}")
-    print(f"  [*] Experience Enhancement")
+    print("  [*] Experience Enhancement")
     print(f"{'='*60}")
-    print(f"  For each job, I'll ask a few quick questions to pull out")
-    print(f"  numbers and outcomes, then rewrite the bullets to be")
-    print(f"  punchy and achievement-focused.")
-    print(f"  (Type 'skip' on any question you can't answer.)\n")
+    print("  For each job, I'll ask a few quick questions to pull out")
+    print("  numbers and outcomes, then rewrite the bullets to be")
+    print("  punchy and achievement-focused.")
+    print("  (Type 'skip' on any question you can't answer.)\n")
 
     try:
         tree = ET.parse(xml_path)
@@ -455,7 +456,7 @@ def enhance_experience(xml_path: str) -> str:
         print(f"  {'-'*56}")
         print(f"  [{i}/{len(jobs)}] {title} @ {company} ({duration})")
         print(f"  {'-'*56}")
-        print(f"  Current bullets:")
+        print("  Current bullets:")
         for b in existing:
             print(f"    * {b[:90]}{'...' if len(b) > 90 else ''}")
         print()
@@ -465,14 +466,14 @@ def enhance_experience(xml_path: str) -> str:
         questions = [
             (
                 f"For this role at {company}: do you have any real numbers? "
-                f"For example -- records processed, users served, team size, "
-                f"time saved in hours, error rate, requests per day. "
-                f"Only share a number if you actually know it."
+                "For example -- records processed, users served, team size, "
+                "time saved in hours, error rate, requests per day. "
+                "Only share a number if you actually know it."
             ),
             (
-                f"What specific thing did you build, fix, or deliver at "
+                "What specific thing did you build, fix, or deliver at "
                 f"{company} that you are most proud of? Describe it in "
-                f"your own words."
+                "your own words."
             ),
             (
                 "Did anything you built or changed have a measurable result? "
@@ -524,7 +525,7 @@ def enhance_experience(xml_path: str) -> str:
                     "content": (
                         f"{enhance_prompt}{honesty_reminder}\n\n"
                         f"ROLE: {title} at {company} ({duration})\n\n"
-                        f"EXISTING BULLETS:\n"
+                        "EXISTING BULLETS:\n"
                         + "\n".join(f"- {b}" for b in existing)
                         + f"\n\nENHANCEMENT Q&A:\n{qa_text}\n\n"
                         "Rewrite the bullets now. "
@@ -555,7 +556,7 @@ def enhance_experience(xml_path: str) -> str:
                 el.text = bullet_text.strip()
 
             print(f"  [OK] Enhanced -- {len(new_bullets)} bullets rewritten.")
-            print(f"  Preview:")
+            print("  Preview:")
             for b in new_bullets[:3]:
                 print(f"    * {b[:90]}{'...' if len(b) > 90 else ''}")
             if len(new_bullets) > 3:
@@ -565,7 +566,7 @@ def enhance_experience(xml_path: str) -> str:
 
         except Exception as e:
             print(f"  [WARN]  Could not enhance {company} bullets: {e}")
-            print(f"     Keeping the original bullets for this job.\n")
+            print("     Keeping the original bullets for this job.\n")
 
     if any_enhanced:
         # Pretty-print the XML with indentation
@@ -574,7 +575,7 @@ def enhance_experience(xml_path: str) -> str:
         print(f"  [OK] Enhanced resume saved to: {xml_path}")
         return open(xml_path, encoding="utf-8").read()
     else:
-        print(f"  (i)  No changes made.")
+        print("  (i)  No changes made.")
         return open(xml_path, encoding="utf-8").read()
 
 
@@ -649,7 +650,10 @@ def main():
     if getattr(_sys, "frozen", False):
         _base = os.path.dirname(_sys.executable)
     else:
+        import sys as _sys5
         _base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if not os.path.isdir(os.path.join(_base, "api")):
+            _base = os.path.dirname(os.path.abspath(_sys5.executable))
     xml_path = os.path.join(_base, "data", "resume_data.xml")
     os.makedirs(os.path.dirname(xml_path), exist_ok=True)
 
@@ -657,7 +661,7 @@ def main():
     if os.path.exists(xml_path):
         backup = xml_path.replace(".xml", "_backup.xml")
         os.rename(xml_path, backup)
-        print(f"\n  [PKG] Existing resume_data.xml backed up to resume_data_backup.xml")
+        print("\n  [PKG] Existing resume_data.xml backed up to resume_data_backup.xml")
 
     with open(xml_path, "w", encoding="utf-8") as f:
         f.write(xml_string)
@@ -666,9 +670,9 @@ def main():
 
     # -- Offer experience enhancement -----------------------------
     print(f"\n{'='*60}")
-    print(f"  [*] Would you like to enhance your work experience bullets?")
-    print(f"     This makes them more punchy and achievement-focused")
-    print(f"     by asking a few quick questions per job.")
+    print("  [*] Would you like to enhance your work experience bullets?")
+    print("     This makes them more punchy and achievement-focused")
+    print("     by asking a few quick questions per job.")
     print(f"{'='*60}")
     enhance_choice = _safe_input("  Enhance experience bullets? [y / n]: ", "n").strip().lower()
     if enhance_choice in ("y", "yes"):
@@ -678,13 +682,13 @@ def main():
 
     # -- Offer per-job experience highlighting --------------------
     print(f"\n{'='*60}")
-    print(f"  [>>] Job-specific experience highlighting")
+    print("  [>>] Job-specific experience highlighting")
     print(f"{'='*60}")
-    print(f"  When generating a tailored resume for each job, should")
-    print(f"  the app reorder your experience bullets to put the most")
-    print(f"  relevant ones first for that specific role?")
-    print(f"  (Bullet text stays exactly the same -- only the order and")
-    print(f"  selection changes per job. Zero content is invented.)")
+    print("  When generating a tailored resume for each job, should")
+    print("  the app reorder your experience bullets to put the most")
+    print("  relevant ones first for that specific role?")
+    print("  (Bullet text stays exactly the same -- only the order and")
+    print("  selection changes per job. Zero content is invented.)")
     highlight_choice = _safe_input("  Enable job-specific highlighting? [y / n]: ", "n").strip().lower()
 
     experience_highlight = highlight_choice in ("y", "yes")
@@ -715,8 +719,8 @@ def main():
     # Reads the XML we just built and generates prompts specific to
     # this person's background. Stored in prompts.db, never in code.
     print(f"\n{'='*60}")
-    print(f"  [AI] Setting up your personalised AI prompts...")
-    print(f"     This takes about 30 seconds...")
+    print("  [AI] Setting up your personalised AI prompts...")
+    print("     This takes about 30 seconds...")
     print(f"{'='*60}\n")
     try:
         import xml.etree.ElementTree as ET
@@ -724,13 +728,13 @@ def main():
         from api.prompts import setup_all_prompts
 
         profile = load_profile_from_xml(xml_path)
-        prompt_result = setup_all_prompts(profile, client, overwrite=False)
-        print(f"\n  [OK] Prompts ready -- "
+        prompt_result = setup_all_prompts(profile, _get_client(), overwrite=False)
+        print("\n  [OK] Prompts ready -- "
               f"{prompt_result['created']} generated, "
               f"{prompt_result['skipped']} already existed.")
     except Exception as e:
         print(f"\n  [WARN]  Could not generate prompts: {e}")
-        print(f"     Run python migrate_prompts.py to set them up separately.")
+        print("     Run python migrate_prompts.py to set them up separately.")
 
     # -- Extract name for the preview -----------------------------
     try:
@@ -741,7 +745,19 @@ def main():
         name = "Unknown"
 
     # -- Profile note ---------------------------------------------
-    note = generate_profile_note(name, xml_path)
+    # Build a short profile summary note
+    try:
+        _skills = []
+        _root2  = ET.fromstring(xml_string)
+        for _s in _root2.findall(".//skill")[:5]:
+            _skills.append(_s.text or "")
+        note = (
+            f"  Name:   {name}\n"
+            f"  Skills: {', '.join(s for s in _skills if s)}\n"
+            f"  Saved:  {xml_path}"
+        )
+    except Exception:
+        note = f"  Profile saved to: {xml_path}"
     print("\n" + "=" * 60)
     print("  [OK] All done!")
     print(note)
@@ -782,7 +798,7 @@ def main():
     except Exception:
         pass
 
-    print(f"\n  You can now run the main bot with run.bat.")
+    print("\n  You can now run the main bot with run.bat.")
     print(f"  It will use the resume data from: {xml_path}\n")
 
 

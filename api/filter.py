@@ -10,7 +10,7 @@ import anthropic
 import json
 import os
 from api.prompts import get_prompt, PROMPT_RELEVANCE_CHECK
-from core.config import AI_MODEL, AI_MODEL_FAST, AI_MODEL_RELEVANCE
+from core.config import AI_MODEL_RELEVANCE
 
 try:
     from core.logger import log, log_warn, log_error, log_debug
@@ -160,6 +160,11 @@ def detect_seniority_gap(job: dict, job_description: str,
 
 def _make_skip_result(job: dict, job_description: str, reason: str) -> dict:
     """Return a safe 'skip' result without calling Claude."""
+    _cpt_default = {"blocked": False, "friendly": False, "matched": [], "note": ""}
+    try:
+        _cpt_default = screen_cpt_sponsorship(job, job_description)
+    except Exception:
+        pass
     return {
         "is_relevant":        False,
         "match_score":        0,
@@ -172,9 +177,9 @@ def _make_skip_result(job: dict, job_description: str, reason: str) -> dict:
         "reason":             reason,
         "matched_skills":     [],
         "missing_skills":     [],
-        "cpt_screen":         cpt,
-        "cpt_blocked":        cpt["blocked"],
-        "cpt_friendly":       cpt["friendly"],
+        "cpt_screen":         _cpt_default,
+        "cpt_blocked":        _cpt_default["blocked"],
+        "cpt_friendly":       _cpt_default["friendly"],
         "is_internship":      False,
     }
 
@@ -226,7 +231,6 @@ def check_job_relevance(profile: dict, job: dict, job_description: str,
         r"|developed and|designed and|built and|created and|managed and"
         r"|as part of|in order to|so that|which resulted in)",
         re.IGNORECASE)
-    _METRICS = re.compile(r"\d+[%xX]?\s*(faster|reduction|improvement|increase|decrease)?")
 
     def _compress_bullet(b: str) -> str:
         """Keep technical terms and metrics, strip filler verbs/phrases."""
@@ -260,7 +264,6 @@ def check_job_relevance(profile: dict, job: dict, job_description: str,
         year   = deg.get("year", "")
         if name:
             edu_lines.append("  - %s — %s (%s)" % (name, school, year))
-    education_summary = "\n".join(edu_lines) or "Not specified"
 
     base_prompt = get_prompt(PROMPT_RELEVANCE_CHECK)
     if not base_prompt:
