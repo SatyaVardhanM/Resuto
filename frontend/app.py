@@ -367,16 +367,19 @@ class BotRunner:
                      "PYTHONUNBUFFERED": "1",
                      "BOT_GUI_MODE":     "1"})
 
-        if getattr(sys, "frozen", False):
-            # Running as PyInstaller exe — sys.executable IS the exe.
-            # Pass --bot-mode so the exe runs orchestrator instead of GUI.
+        # Detect compiled (Nuitka or PyInstaller) vs source mode
+        # Nuitka does NOT set sys.frozen — detect by checking if script exists on disk
+        script = str(BOT_SCRIPT)
+        is_compiled = (
+            getattr(sys, "frozen", False)   # PyInstaller sets this
+            or not os.path.exists(script)   # Nuitka: .py files compiled into binary
+        )
+
+        if is_compiled:
+            # Compiled exe: spawn self with --bot-mode to run orchestrator
             cmd = [sys.executable, "--bot-mode", "--gui"] + self._args
         else:
-            # Running from source — launch orchestrator.py with Python
-            script = str(BOT_SCRIPT)
-            if not os.path.exists(script):
-                self._on_done(-1)
-                return
+            # Source mode: run orchestrator.py directly with Python
             cmd = [sys.executable, "-u", script, "--gui"] + self._args
 
         self._proc = subprocess.Popen(
@@ -1122,20 +1125,49 @@ class App(ctk.CTk):
 
         # Open log file button
         def _open_log():
+            """Show last 200 lines of bot.log in an in-app popup window."""
             try:
                 from core.logger import _get_log_file
-                import subprocess, platform, os
+                import os
                 log_path = _get_log_file()
-                # Create log file if it doesn't exist yet
+
+                # Create file if it doesn't exist yet
                 if not os.path.exists(log_path):
                     os.makedirs(os.path.dirname(log_path), exist_ok=True)
                     open(log_path, "a").close()
-                if platform.system() == "Windows":
-                    subprocess.Popen(["notepad.exe", log_path])
-                elif platform.system() == "Darwin":
-                    subprocess.Popen(["open", "-a", "TextEdit", log_path])
-                else:
-                    subprocess.Popen(["xdg-open", log_path])
+
+                # Read last 200 lines
+                try:
+                    with open(log_path, encoding="utf-8", errors="replace") as f:
+                        lines = f.readlines()
+                    text = "".join(lines[-200:]) if lines else "(log is empty)"
+                except Exception:
+                    text = f"Log file: {log_path}\n(Could not read contents)"
+
+                # Show in a simple in-app popup — no external app needed
+                win = ctk.CTkToplevel(self)
+                win.title("Bot Log")
+                win.geometry("900x600")
+                win.grab_set()
+
+                # Header
+                ctk.CTkLabel(win, text=f"Log: {log_path}",
+                             font=F("small"), text_color=FG_DIM
+                             ).pack(anchor="w", padx=12, pady=(10,0))
+
+                # Scrollable text
+                txt = ctk.CTkTextbox(win, font=ctk.CTkFont(family="Consolas", size=11),
+                                     fg_color=BG_FIELD, text_color=FG,
+                                     wrap="none")
+                txt.pack(fill="both", expand=True, padx=12, pady=8)
+                txt.insert("end", text)
+                txt.configure(state="disabled")
+                txt.see("end")
+
+                # Close button
+                ctk.CTkButton(win, text="Close", width=100,
+                              command=win.destroy).pack(pady=(0,10))
+
             except Exception as e:
                 self._append_error(f"Could not open log: {e}")
 
