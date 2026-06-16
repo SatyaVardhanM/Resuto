@@ -162,15 +162,24 @@ def load_profile_from_xml(xml_path: str = None) -> dict:
     return profile
 
 
-# -- Load profile on import --------------------------------------
-try:
-    MY_PROFILE = load_profile_from_xml()
-    print(f"[OK] Profile loaded: {MY_PROFILE['name']}")
-except FileNotFoundError:
-    # No profile yet — user hasn't done intake. This is normal on first run.
-    MY_PROFILE = {}
-    print("[INFO] No resume_data.xml found yet — run intake in Settings to create one.")
-except Exception as e:
-    log_error("Profile load error: %s" % e)
-    print("[ERR] Error loading profile from XML: %s" % e)
+# -- Lazy profile loading ----------------------------------------
+# MY_PROFILE is populated on first access, not at import time.
+# Avoids input() EOF errors when imported as a subprocess.
+MY_PROFILE: dict = {}
+_profile_loaded: bool = False
+
+
+def get_profile() -> dict:
+    """Returns cached profile, loading from XML on first call."""
+    global MY_PROFILE, _profile_loaded
+    if not _profile_loaded:
+        _profile_loaded = True
+        try:
+            MY_PROFILE = load_profile_from_xml()
+        except FileNotFoundError:
+            MY_PROFILE = {}
+        except Exception as e:
+            log_error("Profile load error: %s" % e)
+            MY_PROFILE = {}
+    return MY_PROFILE
     MY_PROFILE = {}

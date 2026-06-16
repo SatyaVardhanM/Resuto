@@ -79,7 +79,7 @@ def call_api(messages: list, system: str = "", max_tokens: int = 4000) -> str:
             print("  Check that ANTHROPIC_API_KEY is set correctly.")
             print("  Your progress so far is saved.")
             print("=" * 60)
-            input("  Press Enter to retry, or Ctrl+C to quit: ")
+            _safe_input("  Press Enter to retry, or Ctrl+C to quit: ", "")
 
         except anthropic.RateLimitError:
             print("\n" + "=" * 60)
@@ -97,29 +97,110 @@ def call_api(messages: list, system: str = "", max_tokens: int = 4000) -> str:
             print(f"  Error: {str(e)[:120]}")
             print("  Your progress so far is saved.")
             print("=" * 60)
-            input("  Press Enter to retry, or Ctrl+C to quit: ")
+            _safe_input("  Press Enter to retry, or Ctrl+C to quit: ", "")
+
+
+def _is_gui_mode() -> bool:
+    """Returns True when running as a GUI subprocess (stdin not interactive)."""
+    import sys
+    try:
+        return not sys.stdin.isatty()
+    except Exception:
+        return True   # assume GUI if we can't tell
+
+
+def _safe_input(prompt: str, default: str = "") -> str:
+    """input() that returns default instead of crashing in GUI/subprocess mode."""
+    if _is_gui_mode():
+        return default
+    try:
+        return input(prompt)
+    except EOFError:
+        return default
 
 
 # -- File reading -------------------------------------------------
+# Sentinel prefix used to distinguish error strings from empty extractions
+_PDF_ERROR_PREFIX = "PDF_ERROR:"
+
+
 def read_pdf(path: str) -> str:
-    """Extracts text from a PDF file."""
+    """
+    Extracts text from a PDF file.
+    Returns extracted text, or a string starting with _PDF_ERROR_PREFIX
+    describing the specific problem so the UI can show a clear message.
+    """
+    import os as _os
+
+    # 1. File exists?
+    if not _os.path.exists(path):
+        return f"{_PDF_ERROR_PREFIX}File not found: {path}"
+
+    # 2. Minimum size check (< 100 bytes = empty/corrupt)
+    if _os.path.getsize(path) < 100:
+        return f"{_PDF_ERROR_PREFIX}File is too small to be a valid PDF."
+
+    # 3. PDF magic bytes check — first 4 bytes must be %PDF
+    try:
+        with open(path, "rb") as _f:
+            header = _f.read(4)
+        if header != b"%PDF":
+            ext = _os.path.splitext(path)[1].lower()
+            return (f"{_PDF_ERROR_PREFIX}This doesn't look like a PDF file "
+                    f"(got {header!r}). "
+                    f"Please select a valid .pdf file.")
+    except Exception as e:
+        return f"{_PDF_ERROR_PREFIX}Could not open file: {e}"
+
+    # 4. Extract text
     try:
         import pypdf
-        text = []
         reader = pypdf.PdfReader(path)
+
+        # Password protected?
+        if reader.is_encrypted:
+            return (f"{_PDF_ERROR_PREFIX}This PDF is password-protected. "
+                    "Please remove the password and try again.")
+
+        # Zero pages?
+        if len(reader.pages) == 0:
+            return f"{_PDF_ERROR_PREFIX}This PDF has no pages."
+
+        text = []
         for page in reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text.append(page_text)
+            try:
+                page_text = page.extract_text()
+                if page_text:
+                    text.append(page_text)
+            except Exception:
+                continue   # skip unreadable pages, try rest
+
         result = "\n".join(text).strip()
+
+        # Scanned/image-only PDF?
         if not result:
-            print("  [WARN]  PDF extracted but no text found.")
-            print("     This sometimes happens with scanned PDFs.")
-            print("     Try converting to DOCX first.")
+            return (f"{_PDF_ERROR_PREFIX}No text found in this PDF. "
+                    "It may be a scanned document (image-only). "
+                    "Please convert to a text-based PDF or DOCX and try again.")
+
+        # Garbled text check (too many non-ASCII chars = likely encoding issue)
+        non_ascii = sum(1 for c in result if ord(c) > 127)
+        if non_ascii > len(result) * 0.4:
+            return (f"{_PDF_ERROR_PREFIX}PDF text appears garbled (encoding issue). "
+                    "Try saving as PDF/A or converting to DOCX.")
+
         return result
+
+    except ImportError:
+        return f"{_PDF_ERROR_PREFIX}pypdf not installed. Run: pip install pypdf"
     except Exception as e:
-        print(f"  [ERR] Could not read PDF: {e}")
-        return ""
+        err = str(e).lower()
+        if "password" in err or "encrypted" in err:
+            return (f"{_PDF_ERROR_PREFIX}PDF is password-protected. "
+                    "Remove the password and try again.")
+        if "eof" in err or "invalid" in err or "corrupt" in err:
+            return f"{_PDF_ERROR_PREFIX}PDF appears corrupted or truncated: {e}"
+        return f"{_PDF_ERROR_PREFIX}Could not read PDF: {e}"
 
 
 def read_docx(path: str) -> str:
@@ -233,7 +314,7 @@ def ask_questions(questions: list) -> list:
             print(f"  (Why: {why})")
         print(f"  ? {question}")
 
-        answer = input("  Your answer: ").strip()
+        answer = _safe_input("  Your answer: ", "").strip()
 
         if answer.lower() == "skip":
             answer = "[skipped]"
@@ -408,7 +489,7 @@ def enhance_experience(xml_path: str) -> str:
         answers = []
         for q in questions:
             print(f"  ? {q}")
-            ans = input("     Your answer: ").strip()
+            ans = _safe_input("     Your answer: ", "").strip()
             if not ans or ans.lower() in ("skip", "n/a", "none", "no"):
                 ans = "[no additional info]"
                 print("  <-  Skipped.\n")
@@ -526,7 +607,7 @@ def main():
         print("  Paste the full path to your resume file.")
         print("  Supported formats: .pdf  .docx")
         print("  Example: C:\\Users\\YourName\\Desktop\\my_resume.pdf\n")
-        path = input("  File path: ").strip()
+        path = _safe_input("  File path: ", "").strip()
 
         if not path:
             print("  [WARN]  No path entered. Try again.\n")
@@ -589,7 +670,7 @@ def main():
     print(f"     This makes them more punchy and achievement-focused")
     print(f"     by asking a few quick questions per job.")
     print(f"{'='*60}")
-    enhance_choice = input("  Enhance experience bullets? [y / n]: ").strip().lower()
+    enhance_choice = _safe_input("  Enhance experience bullets? [y / n]: ", "n").strip().lower()
     if enhance_choice in ("y", "yes"):
         xml_string = enhance_experience(xml_path)
     else:
@@ -604,9 +685,7 @@ def main():
     print(f"  relevant ones first for that specific role?")
     print(f"  (Bullet text stays exactly the same -- only the order and")
     print(f"  selection changes per job. Zero content is invented.)")
-    highlight_choice = input(
-        "  Enable job-specific highlighting? [y / n]: "
-    ).strip().lower()
+    highlight_choice = _safe_input("  Enable job-specific highlighting? [y / n]: ", "n").strip().lower()
 
     experience_highlight = highlight_choice in ("y", "yes")
     print(

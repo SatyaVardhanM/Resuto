@@ -914,9 +914,15 @@ class App(ctk.CTk):
                 "\"reason\": \"Why this matches in 5 words\"}, ...]"
             )
             self._q.put(("s3_status", "Asking Claude for suggestions..."))
-            client = _ant.Anthropic(api_key=self._api_var.get().strip())
-            msg = client.messages.create(model=_model, max_tokens=1000,
-                                          messages=[{"role":"user","content":prompt}])
+            client = _ant.Anthropic(
+                api_key=self._api_var.get().strip(),
+                timeout=60.0,          # 60 second timeout -- no silent hangs
+            )
+            msg = client.messages.create(
+                model=_model,
+                max_tokens=1000,
+                messages=[{"role": "user", "content": prompt}]
+            )
             text = msg.content[0].text.strip()
             if "```" in text:
                 parts = text.split("```")
@@ -926,7 +932,13 @@ class App(ctk.CTk):
             _je = text.rfind("]") + 1
             if _js >= 0 and _je > _js:
                 text = text[_js:_je]
-            parsed = json.loads(text.strip())
+            try:
+                parsed = json.loads(text.strip())
+            except json.JSONDecodeError as je:
+                self._q.put(("roles_error",
+                    f"Claude returned unexpected format.\n"
+                    f"Please try again.\n\nDetails: {je}"))
+                return
             # Handle both formats: [{role,match}] or ["string"]
             roles_with_scores = []
             for item in parsed:
@@ -938,6 +950,11 @@ class App(ctk.CTk):
                     })
                 elif isinstance(item, str) and item.strip():
                     roles_with_scores.append({"role": item.strip(), "match": 50, "reason": ""})
+            if not roles_with_scores:
+                self._q.put(("roles_error",
+                    "Claude couldn't suggest roles from your profile.\n"
+                    "Make sure your resume_data.xml has experience and skills filled in."))
+                return
             self._q.put(("roles_ready", roles_with_scores))
         except Exception as e:
             self._q.put(("roles_error", str(e)))
@@ -3875,21 +3892,38 @@ Keep responses conversational — 2-5 sentences is usually right. Longer if you'
 
     def _extract_text(self):
         try:
-            try:
-                from api.intake import read_resume_file
-            except ModuleNotFoundError:
-                from api.intake import read_resume_file
+            from api.intake import read_resume_file, _PDF_ERROR_PREFIX
+        except ImportError:
+            from api.intake import read_resume_file
+            _PDF_ERROR_PREFIX = "PDF_ERROR:"
+
+        try:
+            self.after(0, lambda: self._status_lbl.configure(
+                text="Reading your resume — please wait..."))
             text = read_resume_file(self._resume_path)
+
+            # Check for specific PDF errors
+            if text and text.startswith(_PDF_ERROR_PREFIX):
+                err_msg = text[len(_PDF_ERROR_PREFIX):].strip()
+                self.after(0, lambda m=err_msg: self._show_error(m))
+                return
+
             if not text or not text.strip():
                 self.after(0, lambda: self._show_error(
-                    "Couldn't extract text from your file.\n\n"
-                    "Make sure it's a readable PDF or DOCX — "
-                    "scanned image-only PDFs won't work."))
+                    "No text could be extracted from your file.\n\n"
+                    "Common reasons:\n"
+                    "  - Scanned/image-only PDF\n"
+                    "  - Password-protected PDF\n"
+                    "  - Corrupted file\n\n"
+                    "Try converting to a text-based DOCX and upload that instead."))
                 return
+
             self._resume_text = text
             self.after(0, self._show_choice)
         except Exception as e:
-            _e = str(e); self.after(0, lambda _e=_e: self._show_error(f"Could not read file:\n{_e}"))
+            _e = str(e)
+            self.after(0, lambda _e=_e: self._show_error(
+                f"Could not read file:\n{_e}"))
 
     # ── Choice screen ────────────────────────────────────────────
 

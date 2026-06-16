@@ -56,7 +56,25 @@ def _exe_dir() -> str:
 
 
 def _settings_file() -> str:
-    return os.path.join(_exe_dir(), "local_settings.json")
+    """
+    Returns path to local_settings.json.
+    Stored in Documents\\Resuto\\ so users can find it and it
+    survives app reinstalls without losing settings.
+    Falls back to exe dir if Documents unavailable.
+    """
+    docs_path = os.path.join(_resuto_documents_dir(), "local_settings.json")
+
+    # Migrate: if old settings exist next to exe, move them to Documents
+    old_path = os.path.join(_exe_dir(), "local_settings.json")
+    if os.path.exists(old_path) and not os.path.exists(docs_path):
+        try:
+            import shutil
+            shutil.move(old_path, docs_path)
+            print("[Setup] Migrated local_settings.json to Documents\\Resuto\\")
+        except Exception:
+            return old_path   # fallback if move fails
+
+    return docs_path
 
 
 def _default_resume_path() -> str:
@@ -122,25 +140,36 @@ def get_settings(force_prompt: bool = False) -> dict:
     needs_prompt = (not gui_mode) and (force_prompt or "output_dir" not in settings)
 
     if needs_prompt:
+        import sys as _sys
+        is_interactive = hasattr(_sys.stdin, "isatty") and _sys.stdin.isatty()
+        if not is_interactive:
+            needs_prompt = False   # subprocess/pipe — never prompt
+
+    if needs_prompt:
         print("\n" + "=" * 55)
         print("[TOOL]  First-time setup -- local paths")
         print("=" * 55)
         default_out = os.path.join(_exe_dir(), "output")
         default_xml = _default_resume_path()
 
-        out = input("   Output dir [Enter = '%s']: " % default_out).strip()
-        settings["output_dir"] = out or default_out
-
-        rd = input("   Resume XML [Enter = '%s']: " % default_xml).strip()
-        settings["resume_data_path"] = rd or default_xml
-
-        _save(settings)
-        print("   [OK] Saved.")
+        try:
+            out = input("   Output dir [Enter = '%s']: " % default_out).strip()
+            settings["output_dir"] = out or default_out
+            rd = input("   Resume XML [Enter = '%s']: " % default_xml).strip()
+            settings["resume_data_path"] = rd or default_xml
+            _save(settings)
+            print("   [OK] Saved.")
+        except EOFError:
+            pass   # non-interactive — use defaults
         print("=" * 55 + "\n")
     else:
         changed = False
         if "output_dir" not in settings:
             settings["output_dir"] = os.path.join(_resuto_documents_dir(), "output")
+            changed = True
+        if "chrome_profile_path" not in settings or not settings.get("chrome_profile_path"):
+            settings["chrome_profile_path"] = os.path.join(
+                _resuto_documents_dir(), "BotChromeProfile")
             changed = True
         if "resume_data_path" not in settings:
             settings["resume_data_path"] = _default_resume_path()
