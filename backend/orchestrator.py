@@ -1077,6 +1077,18 @@ async def main(gui_args=None):
         _sys3.modules["greenlet._greenlet"]  = _gl_stub
         log("Greenlet C extension unavailable — using pure-Python stub (async mode OK)")
 
+    # Lazy imports of backend modules — resolved here inside main()
+    # Module-level stubs are None; we set real functions here
+    try:
+        from backend.scraper import continuous_job_search
+        from backend.browser import create_logged_in_context, minimize_browser
+        from api.filter   import check_job_relevance, print_relevance_report
+        log("Backend modules imported successfully")
+    except Exception as _imp_e:
+        print("[!!] Backend import failed: %s" % _imp_e, flush=True)
+        log_error("Backend import failed: %s" % _imp_e)
+        raise RuntimeError("Backend import failed: %s" % _imp_e) from _imp_e
+
     # Lazy import — only load playwright when bot actually runs
     try:
         from playwright.async_api import async_playwright
@@ -1092,6 +1104,13 @@ async def main(gui_args=None):
         ) from _e
 
     async with async_playwright() as playwright:
+        # Debug: verify create_logged_in_context is the real function not None
+        if create_logged_in_context is None:
+            raise RuntimeError(
+                "create_logged_in_context is None — browser import failed silently. "
+                "Check backend/browser.py imports."
+            )
+        log("Launching browser via create_logged_in_context...")
         browser, context, page = await create_logged_in_context(playwright)
 
         print("\n" + "=" * 50)
