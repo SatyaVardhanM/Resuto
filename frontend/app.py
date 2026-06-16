@@ -43,7 +43,7 @@ def _get_bot_script() -> Path:
     if getattr(sys, "frozen", False):
         base = Path(sys.executable).parent
     else:
-        base = Path(__file__).parent.parent
+        base = Path(sys.executable).parent
 
     p = base / "backend" / "orchestrator.py"
 
@@ -52,7 +52,7 @@ def _get_bot_script() -> Path:
         for alt in [
             base / "main.py",
             base / "orchestrator.py",
-            Path(__file__).parent / "orchestrator.py",
+            Path(sys.executable).parent / "orchestrator.py",
         ]:
             if alt.exists():
                 return alt
@@ -81,12 +81,12 @@ def _settings_file() -> Path:
     """Return local_settings.json path — works both from source and exe."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent / "local_settings.json"
-    return Path(__file__).parent.parent / "local_settings.json"  # source mode
+    return Path(sys.executable).parent / "local_settings.json"  # frozen/source
 
 def _load_settings() -> dict:
     """Load full local_settings.json."""
     try:
-        p = Path(sys.executable).parent / "local_settings.json" if getattr(sys, "frozen", False)             else Path(__file__).parent.parent / "local_settings.json"
+        p = Path(sys.executable).parent / "local_settings.json"
         if p.exists():
             import json as _j
             return _j.loads(p.read_text(encoding="utf-8"))
@@ -97,7 +97,7 @@ def _load_settings() -> dict:
 def _save_settings(data: dict) -> None:
     """Save full local_settings.json."""
     try:
-        p = Path(sys.executable).parent / "local_settings.json" if getattr(sys, "frozen", False)             else Path(__file__).parent.parent / "local_settings.json"
+        p = Path(sys.executable).parent / "local_settings.json"
         import json as _j
         p.write_text(_j.dumps(data, indent=2), encoding="utf-8")
     except Exception:
@@ -2773,12 +2773,14 @@ class App(ctk.CTk):
         elif self._tb_active:
             if s.strip():
                 self._tb_buffer.append(s)
-                # Flush when we hit the actual error line (non-indented, contains colon)
-                if s and not s.startswith(" ") and not s.startswith("	") and ":" in s:
+                # Flush on ErrorType: message line — not on File/indented lines
+                import re as _re2
+                if (s and not s.startswith(" ") and not s.startswith("\t")
+                        and not s.startswith("File ")
+                        and _re2.match(r"[A-Za-z][A-Za-z0-9_]*Error.*:", s)):
                     self._append_error("\n".join(self._tb_buffer))
                     self._tb_buffer = []
                     self._tb_active = False
-            else:
                 # Blank line ends traceback
                 if self._tb_buffer:
                     self._append_error("\n".join(self._tb_buffer))
@@ -5075,8 +5077,35 @@ class RegistrationWindow(ctk.CTkToplevel):
         try:
             from core.license import (
                 _machine_id, send_approval_request,
-                poll_for_decision, store_decision, notify_admin_expired)
+                poll_for_decision, store_decision, notify_admin_expired,
+                _fetch_from_sheet, store_decision)
             mid = _machine_id()
+
+            # Pre-check: does this machine already have an entry in the sheet?
+            existing = _fetch_from_sheet(mid)
+            if existing:
+                status = existing.get("status", "").lower()
+                if status == "approved":
+                    # Already approved — just re-store the decision locally
+                    self._q.put(("status", "Machine already approved. Restoring access..."))
+                    store_decision(
+                        existing.get("name", name),
+                        existing.get("phone", phone),
+                        mid,
+                        "approved",
+                        email=existing.get("email", email)
+                    )
+                    self._q.put(("approved", None))
+                    return
+                elif status == "pending":
+                    self._q.put(("error",
+                        "Your access request is still pending approval.\n\n"
+                        "Please wait for the admin to approve your previous request.\n"
+                        "Do not submit again."))
+                    return
+                elif status == "revoked":
+                    self._q.put(("denied", None))
+                    return
 
             msg_id = send_approval_request(name, phone, mid, email=email)
             if not msg_id:
@@ -5232,27 +5261,25 @@ if __name__ == "__main__":
         sys.exit(r.returncode)
 
     if "--bot-mode" in sys.argv:
-        sys.argv.remove("--bot-mode")
-        import asyncio
+        # Wrap EVERYTHING in try/except — no silent crash possible
+        try:
+            sys.argv.remove("--bot-mode")
+            import asyncio
 
-        # Nuitka compiled: all modules built in, no path manipulation needed
-        # Just ensure the exe's directory is in sys.path for data-dir bundles
-        if getattr(sys, "frozen", False):
+            # Use sys.executable.parent — reliable in Nuitka (never use __file__ which can be None)
             _root = str(Path(sys.executable).parent)
             if _root not in sys.path:
                 sys.path.insert(0, _root)
-        else:
-            _root = str(Path(__file__).parent.parent)
-            if _root not in sys.path:
-                sys.path.insert(0, _root)
 
-        def _getarg(flag, default=""):
-            try: return sys.argv[sys.argv.index(flag) + 1]
-            except (ValueError, IndexError): return default
+            def _getarg(flag, default=""):
+                try: return sys.argv[sys.argv.index(flag) + 1]
+                except (ValueError, IndexError): return default
 
-        try:
+            print("[BOT] Step 1: importing orchestrator...", flush=True)
             from backend.orchestrator import main as _bot_main
+            print("[BOT] Step 2: importing settings...", flush=True)
             from core.settings import get_settings as _gs2
+            print("[BOT] Step 3: building gui_args...", flush=True)
 
             gui_args = type("A", (), {
                 "gui":              True,
@@ -5265,17 +5292,22 @@ if __name__ == "__main__":
                 "application_mode": _gs2().get("application_mode", "continuous"),
             })()
 
+            print("[BOT] Step 4: starting asyncio run...", flush=True)
             asyncio.run(_bot_main(gui_args=gui_args))
+            print("[BOT] Done.", flush=True)
 
         except (KeyboardInterrupt, EOFError):
             pass
-        except Exception as _err:
+        except Exception as _bot_err:
             import traceback as _tb
-            print("[!!] Bot subprocess crashed: " + str(_err), flush=True)
-            print(_tb.format_exc(), flush=True)
+            for _line in _tb.format_exc().split("\n"):
+                if _line.strip():
+                    print(_line, flush=True)
+            print("[!!] " + type(_bot_err).__name__ + ": " + str(_bot_err), flush=True)
             sys.exit(1)
 
         sys.exit(0)
+
 
 
     # ── Normal GUI mode ───────────────────────────────────────────

@@ -1,7 +1,13 @@
 # backend/orchestrator.py
 import sys as _sys, os as _os
-if not getattr(_sys, "frozen", False):
-    _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+# Nuitka does not set sys.frozen — detect compiled mode by checking __file__
+# In compiled mode __file__ might not exist or be the exe path
+try:
+    _src_root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    if _os.path.isdir(_src_root) and _src_root not in _sys.path:
+        _sys.path.insert(0, _src_root)
+except Exception:
+    pass
 
 import os
 import sys
@@ -1053,6 +1059,9 @@ if __name__ == "__main__":
                         choices=["easy_apply", "all"])
     parser.add_argument("--roles",        nargs="*", default=[])
     parser.add_argument("--clear-runs",   action="store_true")
+    parser.add_argument("--exp-levels",   nargs="*", default=[])
+    parser.add_argument("--job-types",    nargs="*", default=[])
+    parser.add_argument("--workplace",    nargs="*", default=[])
     parser.add_argument("--phase2-only",  action="store_true",
                         help="Skip Phase 1, run Phase 2 only")
     parser.add_argument("--job-ids",      nargs="+", type=int, default=[],
