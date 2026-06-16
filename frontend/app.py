@@ -859,6 +859,11 @@ class App(ctk.CTk):
                     f"Resume XML not found: {xml}\nPlease check the path in Settings."))
                 return
 
+            # Log what we're working with so failures are traceable
+            import os as _os2
+            print(f"[Analyse] API key: {'set' if api_key else 'MISSING'}")
+            print(f"[Analyse] XML path: {xml}")
+            print(f"[Analyse] XML exists: {_os2.path.exists(xml)}")
             self._q.put(("s3_status", "Loading your profile..."))
 
             # Load profile from XML
@@ -1118,21 +1123,26 @@ class App(ctk.CTk):
         # Open log file button
         def _open_log():
             try:
-                from core.logger import LOG_FILE
-                import subprocess, platform
+                from core.logger import _get_log_file
+                import subprocess, platform, os
+                log_path = _get_log_file()
+                # Create log file if it doesn't exist yet
+                if not os.path.exists(log_path):
+                    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                    open(log_path, "a").close()
                 if platform.system() == "Windows":
-                    subprocess.Popen(["notepad.exe", LOG_FILE])
+                    subprocess.Popen(["notepad.exe", log_path])
                 elif platform.system() == "Darwin":
-                    subprocess.Popen(["open", "-a", "TextEdit", LOG_FILE])
+                    subprocess.Popen(["open", "-a", "TextEdit", log_path])
                 else:
-                    subprocess.Popen(["xdg-open", LOG_FILE])
+                    subprocess.Popen(["xdg-open", log_path])
             except Exception as e:
                 self._append_error(f"Could not open log: {e}")
 
         def _show_log_path():
             try:
-                from core.logger import LOG_FILE
-                messagebox.showinfo("Log File Location", LOG_FILE)
+                from core.logger import _get_log_file
+                messagebox.showinfo("Log File Location", _get_log_file())
             except Exception:
                 messagebox.showinfo("Log File", "Log file not available")
 
@@ -3261,65 +3271,17 @@ class App(ctk.CTk):
 
     def _xml_path(self) -> str:
         """
-        Resolve resume_data.xml path.
-
-        When running as a PyInstaller exe, __file__ points inside the
-        read-only _internal/ temp folder. User data must go somewhere
-        writable and persistent instead.
-
-        Priority order:
-        1. local_settings.json → resume_data_path  (explicit saved path)
-        2. Exe sibling data/ folder                 (next to the .exe)
-        3. ~/resuto/                     (user home fallback)
-        4. ~/.resume_automation/                    (legacy fallback)
+        Resolve resume_data.xml path using core/settings.py.
+        Single source of truth - no duplicate logic.
         """
-        # Detect if running as a PyInstaller bundle
-        frozen = getattr(sys, "frozen", False)
-
-        # ── 1. Check local_settings.json first ──────────────────
         try:
-            if frozen:
-                # Settings file lives next to the .exe
-                settings_p = Path(sys.executable).parent / "local_settings.json"
-            else:
-                settings_p = _settings_file()
-
-            if settings_p.exists():
-                import json as _j
-                stored = _j.loads(
-                    settings_p.read_text(encoding="utf-8")
-                ).get("resume_data_path", "")
-                if stored and Path(stored).is_file():
-                    return stored
+            from core.settings import get_resume_data_path
+            return get_resume_data_path()
         except Exception:
-            pass
+            # Fallback: Documents\Resuto\resume_data.xml
+            from pathlib import Path
+            return str(Path.home() / "Documents" / "Resuto" / "resume_data.xml")
 
-        # ── 2. Preferred writable location ───────────────────────
-        if frozen:
-            # Next to the .exe: dist/resuto/data/resume_data.xml
-            preferred = Path(sys.executable).parent / "data" / "resume_data.xml"
-        else:
-            preferred = Path(__file__).parent.parent / "data" / "resume_data.xml"
-
-        if preferred.exists():
-            return str(preferred)
-
-        # ── 3. Home directory fallbacks ──────────────────────────
-        home_new = Path.home() / "resuto" / "resume_data.xml"
-        home_old = Path.home() / ".resume_automation" / "resume_data.xml"
-
-        if home_new.exists():
-            return str(home_new)
-        if home_old.exists():
-            return str(home_old)
-
-        # ── Nothing found — return preferred and ensure folder exists ─
-        try:
-            preferred.parent.mkdir(parents=True, exist_ok=True)
-            return str(preferred)
-        except OSError:
-            home_new.parent.mkdir(parents=True, exist_ok=True)
-            return str(home_new)
 
     def _toggle_key_visibility(self):
         self._key_visible = not self._key_visible

@@ -56,7 +56,25 @@ def _log_dir() -> Path:
         return fallback
 
 
-LOG_FILE = str(_log_dir() / "bot.log")
+def _get_log_file() -> str:
+    """Returns log file path, creating directory if needed."""
+    log_dir = _log_dir()
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return str(log_dir / "bot.log")
+
+
+# Lazy LOG_FILE - evaluated on first access
+class _LazyLogFile:
+    """Proxy so LOG_FILE works as a string but directory is created lazily."""
+    def __str__(self):       return _get_log_file()
+    def __fspath__(self):    return _get_log_file()
+    def __add__(self, o):    return _get_log_file() + o
+    def __radd__(self, o):   return o + _get_log_file()
+    def __repr__(self):      return repr(_get_log_file())
+    def __eq__(self, o):     return _get_log_file() == o
+
+
+LOG_FILE = _LazyLogFile()
 
 # ── Set up logger ─────────────────────────────────────────────────
 _logger = logging.getLogger(APP_NAME)
@@ -65,7 +83,7 @@ _logger.setLevel(logging.DEBUG)
 if not _logger.handlers:
     # Rotating file — 5 MB max, keep 2 backups
     _fh = RotatingFileHandler(
-        LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=2,
+        _get_log_file(), maxBytes=5 * 1024 * 1024, backupCount=2,
         encoding="utf-8")
     _fh.setLevel(logging.DEBUG)
     _fh.setFormatter(logging.Formatter(
