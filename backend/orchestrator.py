@@ -1007,10 +1007,15 @@ async def main(gui_args=None):
     # Lazy import — only load playwright when bot actually runs
     try:
         from playwright.async_api import async_playwright
-    except ImportError as _e:
+    except (ImportError, Exception) as _e:
+        print("[!!] Playwright import failed: %s" % _e, flush=True)
+        print("[!!] Fix: Run 'resuto.exe --install-browsers' from Command Prompt", flush=True)
+        print("[!!] Or install manually: pip install playwright && playwright install chromium", flush=True)
         raise RuntimeError(
-            "Playwright not found. Run: resuto.exe --install-browsers\n"
-            f"Details: {_e}"
+            "Playwright not available.\n"
+            "Run: resuto.exe --install-browsers\n"
+            "Or reinstall Resuto to trigger automatic browser download.\n"
+            "Details: %s" % _e
         ) from _e
 
     async with async_playwright() as playwright:
