@@ -1003,8 +1003,52 @@ class App(ctk.CTk):
         self._role_scroll = scroll
         self._role_vars   = []
 
+        # Search mode selector
+        mode_frame = ctk.CTkFrame(f, fg_color=BG_CARD, corner_radius=8)
+        mode_frame.grid(row=2, column=0, sticky="ew", padx=8, pady=(8,0))
+        mode_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(mode_frame, text="Search strategy:",
+                     font=F("label_b"), text_color=FG
+                     ).grid(row=0, column=0, sticky="w", padx=14, pady=(10,4))
+
+        self._search_mode = ctk.StringVar(value="specific")
+        modes = [
+            ("specific",
+             "🎯  Exact names",
+             "Searches LinkedIn for the exact role names above\n"
+             "Best when your profile is highly specialised"),
+            ("broad",
+             "🔍  Broader terms",
+             "Converts roles to general titles (Software Engineer, Developer)\n"
+             "More results — better when exact names return few jobs"),
+            ("both",
+             "⚡  Both",
+             "Runs exact names first, then broad terms\n"
+             "Maximum coverage — takes longer"),
+            ("location",
+             "📍  Location only",
+             "No keyword — returns all jobs in your location\n"
+             "Bot queues only jobs matching your profile via AI filter"),
+        ]
+        btn_row = ctk.CTkFrame(mode_frame, fg_color="transparent")
+        btn_row.grid(row=1, column=0, sticky="ew", padx=14, pady=(0,10))
+
+        self._mode_info = ctk.StringVar(value="Searches LinkedIn for the exact role names above")
+        for val, label, tooltip in modes:
+            rb = ctk.CTkRadioButton(
+                btn_row, text=label, variable=self._search_mode, value=val,
+                font=F("label"), text_color=FG_SOFT,
+                command=lambda t=tooltip.split("\n")[0]: self._mode_info.set(t),
+            )
+            rb.pack(side="left", padx=(0, 18))
+
+        ctk.CTkLabel(mode_frame, textvariable=self._mode_info,
+                     font=F("small"), text_color=FG_DIM, anchor="w"
+                     ).grid(row=2, column=0, sticky="ew", padx=14, pady=(0,8))
+
         nav = ctk.CTkFrame(f, fg_color="transparent")
-        nav.grid(row=2, column=0, sticky="ew", pady=(8,0))
+        nav.grid(row=3, column=0, sticky="ew", pady=(8,0))
         ctk.CTkButton(nav, text="← Back", width=100,
                       fg_color=BG_CARD, hover_color=BG_HOVER,
                       command=lambda: self._show_step(1)).pack(side="left")
@@ -2319,6 +2363,70 @@ class App(ctk.CTk):
     # ── Run controls ───────────────────────────────────────────────
     def _start(self):
         selected = [r for v,r in self._role_vars if v.get()]
+
+        # Expand roles based on search mode
+        search_mode = getattr(self, "_search_mode", None)
+        mode = search_mode.get() if search_mode else "specific"
+
+        if mode == "location":
+            # No keyword search — use empty string so scraper searches all jobs in location
+            # The AI relevance filter queues only matching ones
+            selected = [""]   # empty keyword = all jobs in location
+            self._set_status("Location-only mode — AI will filter jobs matching your profile")
+
+        elif mode in ("broad", "both"):
+            _BROAD_MAP = {
+                # Tech → broad
+                "software":    "Software Engineer",
+                "developer":   "Software Developer",
+                "engineer":    "Software Engineer",
+                "backend":     "Backend Developer",
+                "frontend":    "Frontend Developer",
+                "fullstack":   "Full Stack Developer",
+                "full stack":  "Full Stack Developer",
+                "data":        "Data Engineer",
+                "ml":          "Machine Learning Engineer",
+                "ai":          "AI Engineer",
+                "devops":      "DevOps Engineer",
+                "cloud":       "Cloud Engineer",
+                "mobile":      "Mobile Developer",
+                "ios":         "iOS Developer",
+                "android":     "Android Developer",
+                "qa":          "QA Engineer",
+                "test":        "Software Test Engineer",
+                "security":    "Security Engineer",
+                "network":     "Network Engineer",
+                "database":    "Database Engineer",
+                ".net":        "Software Engineer",
+                "python":      "Software Engineer",
+                "java":        "Software Engineer",
+                "javascript":  "Frontend Developer",
+                "react":       "Frontend Developer",
+                "node":        "Backend Developer",
+            }
+            broad_roles = []
+            for role in selected:
+                role_lower = role.lower()
+                matched = None
+                for keyword, broad in _BROAD_MAP.items():
+                    if keyword in role_lower:
+                        matched = broad
+                        break
+                if matched and matched not in broad_roles:
+                    broad_roles.append(matched)
+            if not broad_roles:
+                broad_roles = ["Software Engineer", "Software Developer"]
+
+            if mode == "broad":
+                selected = broad_roles
+            else:  # both
+                # Exact names first, then broad ones not already in list
+                for b in broad_roles:
+                    if b not in selected:
+                        selected.append(b)
+
+        if mode != "specific":
+            self._set_status("Search mode: %s — %d role(s) to search" % (mode, len(selected)))
         if not selected:
             messagebox.showwarning("No Roles","Select at least one role."); return
 

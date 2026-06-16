@@ -251,8 +251,11 @@ def score_job(title: str, keyword: str) -> int:
 
 
 def build_search_url(keyword, location, filters, start=0):
-    params = [
-        f"keywords={keyword.replace(' ', '%20')}",
+    params = []
+    if keyword and keyword.strip():
+        params.append(f"keywords={keyword.strip().replace(' ', '%20')}")
+    # No keyword = all jobs in location (location-only mode)
+    params += [
         f"location={location.replace(' ', '%20')}",
         "sortBy=DD",
         f"start={start}",
@@ -329,6 +332,9 @@ async def collect_job_cards_human_way(page, keyword) -> list:
     print(f"   [>>] Found {len(cards)} job cards")
     
     # Filter by relevance based on visible title
+    # If no keyword (location-only mode), accept all cards without title filter
+    location_only_mode = not keyword or not keyword.strip()
+
     relevant_cards = []
     for card in cards:
         try:
@@ -430,7 +436,7 @@ async def scrape_page_human_way(page, keyword, location, filters, start):
         await _scroll_job_list(page, random.randint(400, 800))
         await _human_pause(500, 1000)
 
-    return await collect_job_cards_human_way(page, keyword)
+    return await collect_job_cards_human_way(page, keyword or "")
 
 
 # -- Click Job Card and Read Description -------------------------
@@ -729,8 +735,9 @@ async def continuous_job_search(page, keyword: str, location: str,
     valid_location = await find_valid_location(page, keyword, location, filters)
 
     mode_label = "[!] Easy Apply only" if apply_mode == "easy_apply" else "[WEB] All jobs"
+    role_label = keyword.strip() if keyword and keyword.strip() else "(all jobs — location only)"
     print(f"\n[>>] Continuous search:")
-    print(f"   Role       : {keyword}")
+    print(f"   Role       : {role_label}")
     print(f"   Location   : {valid_location}")
     print(f"   Apply Mode : {mode_label}\n")
 

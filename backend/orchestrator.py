@@ -481,11 +481,89 @@ async def run_applications(
 
                 return False
 
-            if not _title_relevant(job.get("title",""), job_keyword):
+            # Location-only mode: smart title filter based on user's selected roles
+            _is_location_only = not job_keyword or not job_keyword.strip()
+
+            if _is_location_only:
+                # Stage 1: Is this job in the same domain as the user's profile?
+                # Use the roles the user selected to infer their domain
+                def _is_domain_match(job_title: str, profile_roles: list) -> bool:
+                    """
+                    Returns True if job_title is plausibly in the same domain
+                    as the user's profile roles. Skips obvious non-matches like
+                    Receptionist/Nurse/Driver without calling Claude API.
+                    """
+                    t = job_title.lower()
+
+                    # Hard exclusions — never relevant to tech profiles
+                    _EXCLUDE = {
+                        "receptionist","nurse","nursing","physician","doctor","dentist",
+                        "pharmacist","therapist","counselor","social worker","teacher",
+                        "driver","delivery","warehouse","forklift","cashier","retail",
+                        "barista","chef","cook","server","bartender","housekeeper",
+                        "cleaner","janitor","security guard","sales associate",
+                        "real estate","loan officer","insurance agent","hair","stylist",
+                        "electrician","plumber","carpenter","mechanic","welder",
+                        "administrative assistant","office manager","paralegal",
+                        "legal assistant","caregiver","home health",
+                    }
+                    for excl in _EXCLUDE:
+                        if excl in t:
+                            return False
+
+                    # Broad tech / engineering keywords — accept any of these
+                    _TECH = {
+                        "software","engineer","developer","programmer","coder",
+                        "backend","frontend","full stack","fullstack","web",
+                        "mobile","ios","android","cloud","devops","sre","platform",
+                        "infrastructure","network","data","database","dba","analytics",
+                        "machine learning","ml","ai","artificial intelligence",
+                        "deep learning","nlp","computer vision","data science",
+                        "security","cybersecurity","qa","quality","test","automation",
+                        "architect","technical","technology","it ","information technology",
+                        "systems","system","api","microservice","kubernetes","docker",
+                        "aws","azure","gcp","python","java","javascript","typescript",
+                        ".net","react","angular","node","golang","rust","scala","c++",
+                        "product manager","technical lead","staff engineer",
+                        "principal engineer","engineering manager","cto","vp engineering",
+                    }
+                    for tech in _TECH:
+                        if tech in t:
+                            return True
+
+                    # Also check against the user's own selected roles
+                    for role in (profile_roles or []):
+                        role_words = set(role.lower().split())
+                        title_words = set(t.split())
+                        if role_words & title_words:
+                            return True
+
+                    # Unknown — let Claude decide (don't skip)
+                    return True
+
+                _profile_roles = getattr(my_profile, "get", lambda k,d=None: d)(
+                    "target_roles", []
+                ) if hasattr(my_profile, "get") else []
+
+                if not _is_domain_match(job.get("title",""), _profile_roles):
+                    log("Location-only: SKIP '%s' — not in tech/engineering domain" % title_short)
+                    print("     <-  Location filter: not a tech role — skipping.", flush=True)
+                    if db_row_id and db_row_id > 0:
+                        try:
+                            tracker.update_job_relevance(
+                                db_row_id, job,
+                                {"is_relevant": False, "match_score": 0,
+                                 "reason": "Location-only: not in tech/engineering domain"},
+                                search_role="(location only)", apply_mode=apply_mode)
+                        except Exception:
+                            pass
+                    continue
+                # Passed domain check → proceed to Claude JD analysis below
+
+            elif not _title_relevant(job.get("title",""), job_keyword):
                 log("Pre-filter: SKIP \'%s\' — title not related to search \'%s\'" % (
                     title_short, job_keyword))
                 print("     <-  Pre-filter skip: title not related to search term.")
-                # Update DB so GUI filters it from Recent/History
                 if db_row_id and db_row_id > 0:
                     try:
                         tracker.update_job_relevance(
