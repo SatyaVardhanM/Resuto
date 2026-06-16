@@ -2877,6 +2877,11 @@ class App(ctk.CTk):
     def _handle_done(self, code: int):
         if getattr(self, "_restarting", False):
             return
+        # Flush any buffered traceback that didn't get a final error line
+        if getattr(self, "_tb_active", False) and self._tb_buffer:
+            self._append_error("\n".join(self._tb_buffer))
+            self._tb_buffer = []
+            self._tb_active = False
         self._live = False
         self._live_dot.configure(text_color=MUTED)
         self._stop_btn.pack_forget()
@@ -5341,7 +5346,19 @@ if __name__ == "__main__":
             pass
         except Exception as _bot_err:
             import traceback as _tb
-            for _line in _tb.format_exc().split("\n"):
+            full_tb = _tb.format_exc()
+            # Write to log file so Open Log shows it
+            try:
+                from core.logger import _get_log_file
+                import os as _os2
+                _lp = _get_log_file()
+                _os2.makedirs(_os2.path.dirname(_lp), exist_ok=True)
+                with open(_lp, "a", encoding="utf-8") as _lf:
+                    _lf.write("\n[BOT CRASH]\n" + full_tb + "\n")
+            except Exception:
+                pass
+            # Print each line so GUI traceback buffer captures all
+            for _line in full_tb.split("\n"):
                 if _line.strip():
                     print(_line, flush=True)
             print("[!!] " + type(_bot_err).__name__ + ": " + str(_bot_err), flush=True)

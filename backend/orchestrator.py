@@ -14,11 +14,32 @@ import sys
 import argparse
 import asyncio
 import json
-import anthropic
-from playwright.async_api import async_playwright
-from backend.scraper import continuous_job_search
-from backend.browser import create_logged_in_context, minimize_browser
-from api.filter import check_job_relevance, print_relevance_report
+
+# Heavy imports wrapped so failures give a clear error message
+try:
+    import anthropic
+except ImportError as _e:
+    raise ImportError(f"anthropic not installed or bundled: {_e}") from _e
+
+try:
+    from playwright.async_api import async_playwright
+except ImportError as _e:
+    raise ImportError(f"playwright not installed or bundled: {_e}") from _e
+
+try:
+    from backend.scraper import continuous_job_search
+except ImportError as _e:
+    raise ImportError(f"backend.scraper import failed: {_e}") from _e
+
+try:
+    from backend.browser import create_logged_in_context, minimize_browser
+except ImportError as _e:
+    raise ImportError(f"backend.browser import failed: {_e}") from _e
+
+try:
+    from api.filter import check_job_relevance, print_relevance_report
+except ImportError as _e:
+    raise ImportError(f"api.filter import failed: {_e}") from _e
 # New pipeline stage modules — imported with fallback so old installs
 # continue to work even if these files are missing.
 try:
