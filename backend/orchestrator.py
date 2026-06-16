@@ -1048,16 +1048,28 @@ async def main(gui_args=None):
         class _GreenletError(Exception): pass
         class _Greenlet:
             def __init__(self, run=None, parent=None):
-                self.run = run
+                self.run    = run
+                self.parent = parent
+                self._dead  = False
             def switch(self, *a, **k):
                 return self.run(*a, **k) if self.run else None
-            dead = False
+            def __call__(self, *a, **k):
+                return self.switch(*a, **k)
+            def throw(self, t=None, v=None, tb=None):
+                raise (t or _GreenletExit)()
+            @property
+            def dead(self): return self._dead
             gr_frame = None
+
+        # getcurrent() must return a callable stub instance (not None)
+        # playwright calls getcurrent()(...) treating greenlets as callables
+        _current_stub = _Greenlet()
+        _current_stub._dead = False
 
         _gl_stub.greenlet        = _Greenlet
         _gl_stub.GreenletExit    = _GreenletExit
         _gl_stub.error           = _GreenletError
-        _gl_stub.getcurrent      = lambda: None
+        _gl_stub.getcurrent      = lambda: _current_stub
         _gl_stub.settrace        = lambda cb: None
         _gl_stub.gettrace        = lambda: None
         _gl_stub.GREENLET_USE_CONTEXT_VARS = False
