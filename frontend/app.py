@@ -2387,6 +2387,35 @@ class App(ctk.CTk):
 
     def _launch_bot(self, selected: list):
         """Actually start the bot subprocess after metric check."""
+
+        # Pre-flight: check browser is available
+        import shutil, os as _os
+        chrome_paths = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            shutil.which("google-chrome") or "",
+            shutil.which("chromium") or "",
+        ]
+        # Also check Playwright bundled Chromium
+        from pathlib import Path as _P
+        playwright_chromium = _P.home() / "AppData" / "Local" / "ms-playwright"
+
+        chrome_found = (
+            any(_os.path.exists(p) for p in chrome_paths if p)
+            or playwright_chromium.exists()
+        )
+
+        if not chrome_found:
+            self._append_error(
+                "No browser found. The bot needs Chrome or Playwright Chromium to run.\n\n"
+                "Fix options:\n"
+                "  1. Install Google Chrome from https://google.com/chrome\n"
+                "  2. Run in Command Prompt: resuto.exe --install-browsers\n"
+                "     (downloads Playwright Chromium automatically)"
+            )
+            self._set_status("Browser not found — see Errors tab")
+            return
+
         self._live_dot.configure(text_color=SUCCESS)
         self._bot_start = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self._stats_last_hash = None
@@ -2467,6 +2496,10 @@ class App(ctk.CTk):
     # ── Bot output ─────────────────────────────────────────────────
     def _on_bot_line(self, line: str):
         self._q.put(("line", line))
+
+    # Traceback buffering state
+    _tb_buffer: list = []
+    _tb_active: bool = False
 
     def _on_bot_done(self, code: int):
         self._q.put(("done", code))
@@ -2733,7 +2766,25 @@ class App(ctk.CTk):
                 self._apply_prompt_shown = True
                 self._show_action_bar("yn_apply")
 
-        if _ERROR_RE.search(line) and not s.startswith("[WARN]"):
+        # Buffer multi-line tracebacks so full error is shown
+        if s.startswith("Traceback (most recent call last):"):
+            self._tb_buffer = [s]
+            self._tb_active = True
+        elif self._tb_active:
+            if s.strip():
+                self._tb_buffer.append(s)
+                # Flush when we hit the actual error line (non-indented, contains colon)
+                if s and not s.startswith(" ") and not s.startswith("	") and ":" in s:
+                    self._append_error("\n".join(self._tb_buffer))
+                    self._tb_buffer = []
+                    self._tb_active = False
+            else:
+                # Blank line ends traceback
+                if self._tb_buffer:
+                    self._append_error("\n".join(self._tb_buffer))
+                self._tb_buffer = []
+                self._tb_active = False
+        elif _ERROR_RE.search(line) and not s.startswith("[WARN]"):
             self._append_error(line)
 
     def _parse_activity(self, s: str):
@@ -5172,6 +5223,14 @@ if __name__ == "__main__":
     # ── Bot mode — launched by the GUI as a subprocess ────────────
     # When running as a PyInstaller exe, the GUI spawns itself with
     # --bot-mode to run the orchestrator instead of opening another window.
+    if "--install-browsers" in sys.argv:
+        # Install Playwright Chromium — called from installer or user
+        import subprocess as _sp
+        print("Installing Playwright Chromium browser...", flush=True)
+        r = _sp.run([sys.executable, "-m", "playwright", "install", "chromium"],
+                    capture_output=False)
+        sys.exit(r.returncode)
+
     if "--bot-mode" in sys.argv:
         sys.argv.remove("--bot-mode")
         import asyncio
