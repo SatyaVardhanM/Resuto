@@ -180,6 +180,8 @@ def get_active_filters(keyword: str, apply_mode: str = "easy_apply",
             filters["job_types"] = gui_filters["job_types"]
         if gui_filters.get("workplace"):
             filters["workplace"] = gui_filters["workplace"]
+        if gui_filters.get("date_posted"):
+            filters["date_posted"] = gui_filters["date_posted"]
 
     filters["easy_apply_only"] = (apply_mode != "all")
 

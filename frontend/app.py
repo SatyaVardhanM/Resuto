@@ -337,8 +337,14 @@ def _read_history(filt: str) -> list:
     elif filt == "stretch":
         where = "WHERE status='matched' AND stretch=1"
     elif filt == "skipped":
-        # Show scored skips only (had API relevance check) not pre-filtered
-        where = ("WHERE status='skipped' AND match_score > 0")
+        # Show all skips except pure noise (no title, no company)
+        where = (
+            "WHERE status='skipped' AND ("
+            "  match_score > 0 OR "      # AI-scored skip
+            "  notes NOT LIKE '%Pre-filter%' AND "
+            "  notes NOT LIKE '%title not related%'"
+            ")"
+        )
     else:
         where = f"WHERE status='{filt}'" + _noise_filter
     try:
@@ -2439,6 +2445,7 @@ class App(ctk.CTk):
 
         # Easy apply from settings (replaces old --mode flag)
         args += ["--mode", "easy_apply" if easy_apply else "all"]
+        args += ["--date-posted", prefs.get("date_posted", "any")]
 
         # Job preference filters
         if exp_levels: args += ["--exp-levels"]  + exp_levels
@@ -3285,6 +3292,22 @@ class App(ctk.CTk):
                       font=F("tiny"), text_color=MUTED
                       ).pack(side="left", padx=(12, 0))
 
+        # ── Date Posted filter ─────────────────────────────────
+        date_row = ctk.CTkFrame(pref_card, fg_color="transparent")
+        date_row.grid(row=12, column=0, columnspan=3, sticky="ew",
+                      padx=16, pady=(0, 14))
+        ctk.CTkLabel(date_row, text="Date Posted:",
+                     font=F("small"), text_color=FG
+                     ).pack(side="left", padx=(0, 10))
+        self._date_var = ctk.StringVar(
+            value=prefs.get("date_posted", "any"))
+        for _lbl, _val in [("Any time","any"),("Past month","month"),
+                            ("Past week","week"),("Past 24 hrs","24hr")]:
+            ctk.CTkRadioButton(
+                date_row, text=_lbl, variable=self._date_var, value=_val,
+                font=F("small"), command=self._save_job_prefs,
+            ).pack(side="left", padx=6)
+
         # ══ SECTION 3: TEXT SIZE ══════════════════════════════════
         section_label("Text Size")
         size_card = section_card()
@@ -3644,6 +3667,7 @@ class App(ctk.CTk):
             "job_types":         ["full_time","contract"],
             "workplace":         ["on_site","remote","hybrid"],
             "easy_apply_only":   True,
+            "date_posted":       "any",
         }
 
     def _save_job_prefs(self):
@@ -3655,6 +3679,7 @@ class App(ctk.CTk):
             "workplace":         [v for v,var in self._place_vars.items()
                                    if var.get()],
             "easy_apply_only":   self._easy_var.get(),
+            "date_posted":       self._date_var.get(),
         }
         try:
             p = Path(self._prefs_path())

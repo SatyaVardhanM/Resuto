@@ -961,10 +961,12 @@ async def main(gui_args=None):
         _raw_wp   = getattr(gui_args, "workplace",   []) or []
         _wp_map   = {"1":"on_site","2":"remote","3":"hybrid"}
 
+        _date_posted = getattr(gui_args, "date_posted", "any") or "any"
         gui_filters = {
-            "exp_levels": [_exp_map[e] for e in _raw_exp if e in _exp_map] or None,
-            "job_types":  [_jt_map[j] for j in _raw_jt if j in _jt_map]  or None,
-            "workplace":  [_wp_map[w] for w in _raw_wp if w in _wp_map]   or None,
+            "exp_levels":  [_exp_map[e] for e in _raw_exp if e in _exp_map] or None,
+            "job_types":   [_jt_map[j] for j in _raw_jt if j in _jt_map]  or None,
+            "workplace":   [_wp_map[w] for w in _raw_wp if w in _wp_map]   or None,
+            "date_posted": _date_posted if _date_posted != "any" else None,
         }
         # Remove None values so get_active_filters uses config defaults for unset
         gui_filters = {k:v for k,v in gui_filters.items() if v}
@@ -1215,9 +1217,10 @@ if __name__ == "__main__":
                         choices=["easy_apply", "all"])
     parser.add_argument("--roles",        nargs="*", default=[])
     parser.add_argument("--clear-runs",   action="store_true")
-    parser.add_argument("--exp-levels",   nargs="*", default=[])
-    parser.add_argument("--job-types",    nargs="*", default=[])
-    parser.add_argument("--workplace",    nargs="*", default=[])
+    parser.add_argument("--exp-levels",    nargs="*", default=[])
+    parser.add_argument("--job-types",     nargs="*", default=[])
+    parser.add_argument("--workplace",     nargs="*", default=[])
+    parser.add_argument("--date-posted",   default="any")
     parser.add_argument("--phase2-only",  action="store_true",
                         help="Skip Phase 1, run Phase 2 only")
     parser.add_argument("--job-ids",      nargs="+", type=int, default=[],
