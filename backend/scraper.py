@@ -24,17 +24,7 @@ JOB_TYPE_MAP = {
 WORKPLACE_MAP = {"on_site": "1", "remote": "2", "hybrid": "3"}
 JOBS_PER_PAGE = 25
 
-ADJACENT_ROLES = [
-    "software engineer", "software developer", "backend engineer",
-    "backend developer", "frontend engineer", "frontend developer",
-    "full stack", "fullstack", "web developer", "web engineer",
-    "application developer", "dotnet", ".net developer", "c# developer",
-    "python developer", "python engineer", "machine learning", "ml engineer",
-    "ai engineer", "deep learning", "data scientist", "data engineer",
-    "computer vision", "nlp engineer", "research engineer", "ai developer",
-    "cloud engineer", "devops engineer", "azure developer",
-    "platform engineer", "engineer", "developer",
-]
+# ADJACENT_ROLES removed — scoring is now generic keyword-based
 
 CARD_SELECTORS = [
     ".job-card-container",
@@ -63,15 +53,9 @@ _TITLE_SYNONYMS = [
     {"manager", "lead", "head"},
 ]
 
-_ROLE_BROADENERS = {
-    # specific → broader fallback
-    "full stack":   "software",
-    "fullstack":    "software",
-    "backend":      "software",
-    "front end":    "software",
-    "frontend":     "software",
-    "front-end":    "software",
-}
+# _ROLE_BROADENERS removed — was tech-only.
+# expand_keyword() now uses profile-agnostic word-level fallback.
+_ROLE_BROADENERS = {}
 
 
 def expand_keyword(keyword: str) -> list:
@@ -145,13 +129,18 @@ def expand_keyword(keyword: str) -> list:
     # "Python Backend Developer" → "Software Developer"
     # "Java Engineer" → "Software Engineer"
     words = lower.split()
-    title_words = {"developer","engineer","programmer","analyst",
-                   "architect","consultant","specialist","manager"}
-    for tw in title_words:
+    # Strip technology/domain prefix to get broader title
+    # e.g. "Python Backend Developer" → "Developer"
+    # Works for any domain — strips words before the role noun
+    role_nouns = {"developer","engineer","programmer","analyst",
+                  "architect","consultant","specialist","manager",
+                  "coordinator","administrator","associate","assistant",
+                  "officer","technician","therapist","director","advisor"}
+    for tw in role_nouns:
         if tw in words:
             idx = words.index(tw)
-            if idx > 0:  # there IS a prefix to strip
-                _add(("Software " + tw).title())
+            if idx > 0:  # there IS a prefix word to strip
+                _add(tw.title())  # just the role noun, no "Software" prefix
                 break
 
     return results[:6]  # cap at 6 fallbacks
@@ -235,17 +224,42 @@ async def _scroll_job_list(page, distance):
 
 
 def score_job(title: str, keyword: str) -> int:
+    """
+    Generic job title scoring — works for any domain.
+    No tech-specific or role-specific assumptions.
+    """
+    import re
+    if not keyword or not keyword.strip():
+        return 50   # location-only mode: neutral score, Claude decides
+
     title_lower   = title.lower()
-    keyword_lower = keyword.lower()
+    keyword_lower = keyword.lower().strip()
+
+    # Exact phrase match
     if keyword_lower in title_lower:
         return 100
-    keyword_words = [w for w in keyword_lower.split() if len(w) > 2]
-    skip_words = ["senior","junior","lead","intern","engineer","developer"]
-    matched = sum(1 for w in keyword_words if w not in skip_words and w in title_lower)
-    if matched >= 2:
-        return matched * 25 + 30
-    for adj in ADJACENT_ROLES:
-        if adj in title_lower:
+
+    # Word-level matching — strip common title modifiers
+    _MODIFIERS = {"senior","junior","lead","staff","principal","associate",
+                  "assistant","head","chief","vp","director","manager",
+                  "entry","mid","level","intern","contract","temp"}
+
+    keyword_words = [w for w in re.findall(r"[a-z0-9]+", keyword_lower)
+                     if len(w) > 2 and w not in _MODIFIERS]
+    title_words   = set(re.findall(r"[a-z0-9]+", title_lower))
+
+    matched = sum(1 for w in keyword_words if w in title_words)
+    if keyword_words and matched / len(keyword_words) >= 0.5:
+        return 50 + matched * 15
+
+    # Substring match (handles acronyms like "RN" in "Registered Nurse RN")
+    for word in keyword_words:
+        if word in title_lower:
+            return 40
+
+    # For adj in ADJACENT_ROLES — removed (was tech-only)
+    # Claude relevance check handles domain similarity
+    if True:
             return 15
     return 0
 
@@ -333,8 +347,6 @@ async def collect_job_cards_human_way(page, keyword) -> list:
     
     # Filter by relevance based on visible title
     # If no keyword (location-only mode), accept all cards without title filter
-    location_only_mode = not keyword or not keyword.strip()
-
     relevant_cards = []
     for card in cards:
         try:

@@ -2375,52 +2375,10 @@ class App(ctk.CTk):
             self._set_status("Location-only mode — AI will filter jobs matching your profile")
 
         elif mode in ("broad", "both"):
-            _BROAD_MAP = {
-                # Tech → broad
-                "software":    "Software Engineer",
-                "developer":   "Software Developer",
-                "engineer":    "Software Engineer",
-                "backend":     "Backend Developer",
-                "frontend":    "Frontend Developer",
-                "fullstack":   "Full Stack Developer",
-                "full stack":  "Full Stack Developer",
-                "data":        "Data Engineer",
-                "ml":          "Machine Learning Engineer",
-                "ai":          "AI Engineer",
-                "devops":      "DevOps Engineer",
-                "cloud":       "Cloud Engineer",
-                "mobile":      "Mobile Developer",
-                "ios":         "iOS Developer",
-                "android":     "Android Developer",
-                "qa":          "QA Engineer",
-                "test":        "Software Test Engineer",
-                "security":    "Security Engineer",
-                "network":     "Network Engineer",
-                "database":    "Database Engineer",
-                ".net":        "Software Engineer",
-                "python":      "Software Engineer",
-                "java":        "Software Engineer",
-                "javascript":  "Frontend Developer",
-                "react":       "Frontend Developer",
-                "node":        "Backend Developer",
-            }
-            broad_roles = []
-            for role in selected:
-                role_lower = role.lower()
-                matched = None
-                for keyword, broad in _BROAD_MAP.items():
-                    if keyword in role_lower:
-                        matched = broad
-                        break
-                if matched and matched not in broad_roles:
-                    broad_roles.append(matched)
-            if not broad_roles:
-                broad_roles = ["Software Engineer", "Software Developer"]
-
+            broad_roles = self._claude_broad_terms(selected)
             if mode == "broad":
-                selected = broad_roles
-            else:  # both
-                # Exact names first, then broad ones not already in list
+                selected = broad_roles if broad_roles else selected
+            else:
                 for b in broad_roles:
                     if b not in selected:
                         selected.append(b)
@@ -2497,6 +2455,46 @@ class App(ctk.CTk):
             pass  # if check fails, launch normally
 
         self._launch_bot(selected)
+
+    def _claude_broad_terms(self, roles: list) -> list:
+        """
+        Ask Claude to generate broader LinkedIn search terms.
+        Works for ANY domain - tech, healthcare, finance, legal, etc.
+        Falls back to original roles on failure.
+        """
+        if not roles:
+            return roles
+        try:
+            api_key = self._api_var.get().strip()
+        except Exception:
+            return roles
+        if not api_key:
+            return roles
+        try:
+            import anthropic as _ant, json as _j
+            client = _ant.Anthropic(api_key=api_key, timeout=20.0)
+            role_list = ", ".join(repr(r) for r in roles)
+            prompt = (
+                "The candidate wants to search LinkedIn for jobs related to: " + role_list + ".\n"
+                "Suggest 2-4 broader search terms that would return more results "
+                "while staying in the same career field.\n"
+                "Use common LinkedIn job title keywords. No seniority words (no Senior/Junior/Lead).\n"
+                "Return ONLY a JSON array of strings. No explanation."
+            )
+            msg = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=150,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            text = msg.content[0].text.strip()
+            s = text.find("["); e = text.rfind("]") + 1
+            if s >= 0 and e > s:
+                broad = _j.loads(text[s:e])
+                if isinstance(broad, list):
+                    return [str(r).strip() for r in broad if r]
+        except Exception as _e:
+            print("[WARN] Broad terms failed: %s" % _e)
+        return roles
 
     def _launch_bot(self, selected: list):
         """Actually start the bot subprocess after metric check."""
@@ -3771,8 +3769,8 @@ class App(ctk.CTk):
             pass
         # Sensible defaults — generic, not CPT-specific
         return {
-            "experience_levels": ["entry","associate","mid_senior"],
-            "job_types":         ["full_time","contract"],
+            "experience_levels": [],
+            "job_types":         [],
             "workplace":         ["on_site","remote","hybrid"],
             "easy_apply_only":   True,
             "date_posted":       "any",

@@ -82,9 +82,9 @@ def screen_cpt_sponsorship(job: dict, job_description: str) -> dict:
     is_friendly = bool(friendly)
 
     if is_blocked:
-        note = "[WARN]  Likely NOT CPT-eligible -- listing says: " + blocking[0]
+        note = "[WARN]  Work auth concern -- listing says: " + blocking[0]
     elif is_friendly:
-        note = "[OK] CPT/OPT-friendly signal found: " + friendly[0]
+        note = "[OK] Work auth friendly signal: " + friendly[0]
     else:
         note = "(i)  No explicit work-authorization statement found"
 
@@ -202,17 +202,49 @@ def check_job_relevance(profile: dict, job: dict, job_description: str,
         return _make_skip_result(job, job_description,
             "Profile not loaded — run resume intake first")
 
-    # CPT context — injected into every relevance check
-    # CPT = work authorized, NO sponsorship needed, legal to work immediately
-    _CPT_CONTEXT = (
-        "WORK AUTHORIZATION: Candidate is on F1 visa with CPT "
-        "(Curricular Practical Training). CPT IS work authorization — "
-        "candidate does NOT need sponsorship, does NOT need H1B, "
-        "and CAN legally work immediately. "
-        "Jobs saying 'no sponsorship' or 'must be authorized to work' "
-        "are ELIGIBLE — candidate already has authorization. "
-        "Only skip if job explicitly requires US Citizenship or Security Clearance."
-    )
+    # Build work authorization context from user settings — not hardcoded
+    def _work_auth_context(prof: dict = None) -> str:
+        """
+        Returns a work authorization context string based on the user's
+        settings. Empty string if not set — no assumptions made.
+        """
+        # 1. Try settings
+        work_auth = ""
+        try:
+            from core.settings import get_settings as _gs
+            work_auth = (_gs().get("work_authorization") or "").strip()
+        except Exception:
+            pass
+        # 2. Try profile
+        if not work_auth and prof and isinstance(prof, dict):
+            work_auth = (prof.get("work_authorization") or "").strip()
+
+        wa = work_auth.upper()
+        if not wa or wa in ("", "UNKNOWN", "OTHER", "NOT SPECIFIED"):
+            return ""  # no context injected — Claude decides without visa info
+        if wa in ("CPT", "OPT", "STEM OPT", "F1", "F-1"):
+            return (
+                "WORK AUTHORIZATION: Candidate has CPT/OPT authorization. "
+                "Already work authorized — no sponsorship needed. "
+                "Jobs saying 'no sponsorship' are ELIGIBLE."
+            )
+        if wa in ("H1B", "H-1B"):
+            return (
+                "WORK AUTHORIZATION: Candidate is on H-1B. "
+                "Employer must be willing to sponsor/transfer H-1B. "
+                "Jobs saying 'no sponsorship' may not be suitable."
+            )
+        if wa in ("GREEN CARD", "GC", "PERMANENT RESIDENT"):
+            return (
+                "WORK AUTHORIZATION: Candidate has a Green Card. "
+                "Fully work authorized, no sponsorship needed."
+            )
+        if wa in ("US CITIZEN", "CITIZEN", "USC", "US CITIZENS"):
+            return (
+                "WORK AUTHORIZATION: Candidate is a US Citizen. "
+                "Fully authorized. No sponsorship required."
+            )
+        return "WORK AUTHORIZATION: %s — verify eligibility per job requirements." % work_auth
 
     all_skills = list(chain.from_iterable(profile["skills"].values()))
 
@@ -280,7 +312,7 @@ def check_job_relevance(profile: dict, job: dict, job_description: str,
         + "Jobs: " + experience_summary.replace("\n"," | ") + "\n"
         + "Skills: " + ", ".join(all_skills[:30]) + "\n"
         + ("Search: " + search_role + "\n" if search_role else "")
-        + "\n" + _CPT_CONTEXT + "\n\n"
+        + ("\n" + _work_auth_context(profile) + "\n\n" if _work_auth_context(profile) else "\n\n")
         + "JOB: " + job.get("title","") + " @ " + job.get("company","") + "\n"
         + ("Required skills: " + ", ".join(jd_skills[:7]) + "\n" if jd_skills else "")
         + ("Mission: " + jd_mission + "\n" if jd_mission else "")
@@ -491,9 +523,7 @@ def check_job_relevance(profile: dict, job: dict, job_description: str,
 
         result["is_relevant"] = _decide()
 
-        # CPT/OPT screening: only block explicit citizenship/clearance requirements
-        # "No sponsorship" phrases are NOT blockers for CPT/OPT holders
-        # Claude's prompt already has correct CPT context — trust its decision
+        # Work auth screening — only active when user set their visa status
         cpt = screen_cpt_sponsorship(job, job_description)
         result["cpt_screen"]   = cpt
         result["cpt_blocked"]  = cpt["blocked"]

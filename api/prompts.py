@@ -304,7 +304,7 @@ No preamble, no explanation, no markdown fences. Raw XML only.
 <profile>
     <meta>
         <years_experience>NUMBER</years_experience>
-        <work_authorization>CPT / OPT / H1B / Green Card / Citizen</work_authorization>
+        <work_authorization>e.g. US Citizen / Green Card / H1B / CPT / OPT</work_authorization>
         <experience_highlight>true</experience_highlight>
     </meta>
     <personal>
@@ -422,7 +422,7 @@ Extract and infer as much as possible from the resume text:
 <profile>
     <meta>
         <years_experience>NUMBER</years_experience>
-        <work_authorization>CPT / OPT / H1B / Green Card / Citizen</work_authorization>
+        <work_authorization>e.g. US Citizen / Green Card / H1B / CPT / OPT</work_authorization>
         <experience_highlight>true</experience_highlight>
     </meta>
     <personal>
@@ -714,7 +714,7 @@ Requirements:
    - Generic skills (Python, Git, communication) shared with a specialized role
      do NOT make it a match — domain fit matters most
    - Only flag ineligible if job EXPLICITLY requires US citizenship or active security clearance
-   - "No sponsorship" or "must be authorized to work" are NOT blockers for CPT/OPT candidates
+   - Work authorization eligibility depends on candidate's status (injected at runtime if set)
    - Report specialization_gap honestly even for internships
    - The candidate profile and full job description will be injected at runtime
 6. Be opinionated — a vague prompt produces vague scores. This person needs

@@ -400,168 +400,36 @@ async def run_applications(
                 log_warn("save_scanning_job failed: %s" % _dbe)
                 db_row_id = -1
 
-            # Pre-filter: title must relate to search term
-            def _title_relevant(job_title: str, search: str) -> bool:
-                import re as _re
+            # Pre-filter: skip obvious title mismatches (no API cost)
+            # Generic word-overlap — works for ANY domain, not just tech
+            def _title_relevant(job_title: str, search: str, my_prof=None) -> bool:
+                if not search or not search.strip():
+                    return True  # location-only: accept all
+                import re as _re2
+                _STOP = {"senior","junior","lead","staff","principal","associate",
+                         "assistant","head","chief","vp","director","manager",
+                         "entry","mid","level","intern","contract","temp",
+                         "part","time","full","remote","hybrid","and","or","the"}
+                def _w(s): return {w for w in _re2.findall(r"[a-z0-9]+",s.lower())
+                                   if len(w)>1 and w not in _STOP}
+                s_words = _w(search); t_words = _w(job_title)
+                if not s_words: return True
+                if s_words & t_words: return True
+                # Substring handles acronyms: "RN" in "Registered Nurse RN"
+                tl = job_title.lower()
+                for w in s_words:
+                    if w in tl: return True
+                # Check against profile experience titles (any domain)
+                if my_prof and isinstance(my_prof, dict):
+                    for exp in my_prof.get("experience",[]):
+                        if _w(exp.get("title","")) & t_words: return True
+                return True  # unknown → let Claude decide
 
-                # Acronym → full form expansion (applied to both search and title)
-                _ACRONYMS = {
-                    r"\bml\b":  "machine learning",
-                    r"\bai\b":  "artificial intelligence",
-                    r"\bdl\b":  "deep learning",
-                    r"\bnlp\b": "natural language processing",
-                    r"\bcv\b":  "computer vision",
-                    r"\bui\b":  "user interface",
-                    r"\bux\b":  "user experience",
-                    r"\bqa\b":  "quality assurance",
-                    r"\bba\b":  "business analyst",
-                    r"\bfe\b":  "front end",
-                    r"\bbe\b":  "back end",
-                    r"\bsre\b": "site reliability",
-                }
-
-                # Semantic domain groups — SINGLE WORDS only (after split+expand)
-                # Any word from the same group means search and title are related
-                _DOMAINS = [
-                    # AI / ML / Data Science domain
-                    {"machine","learning","neural","intelligence","artificial",
-                     "vision","computer","nlp","language","generative","llm",
-                     "deep","reinforcement","diffusion","perception","recognition",
-                     "prediction","classification","inference","embedding",
-                     "transformer","bert","gpt","detection","segmentation"},
-                    # Frontend domain
-                    {"frontend","react","angular","vue","javascript","typescript",
-                     "html","css","ui","ux","interface","experience","web","dom"},
-                    # Backend / systems domain
-                    {"backend","api","server","microservice","distributed",
-                     "database","service","rest","grpc","kafka","redis"},
-                    # Data / analytics domain
-                    {"data","analytics","warehouse","pipeline","etl","spark",
-                     "hadoop","tableau","reporting","visualization"},
-                    # DevOps / infrastructure domain
-                    {"devops","infrastructure","kubernetes","docker","terraform",
-                     "ci","cd","deployment","reliability","sre","platform"},
-                    # Mobile domain
-                    {"mobile","ios","android","flutter","swift","kotlin"},
-                ]
-
-                def _expand(text):
-                    t = text.lower()
-                    # Normalize separators
-                    t = t.replace("/", " ").replace("-", " ")
-                    for pat, repl in _ACRONYMS.items():
-                        t = _re.sub(pat, repl, t)
-                    return t
-
-                s_exp = _expand(search)
-                t_exp = _expand(job_title)
-
-                filler = {"engineer","developer","programmer","specialist",
-                          "senior","sr","junior","jr","lead","principal",
-                          "staff","remote","role","position","job","the",
-                          "and","or","for","with","of","in","at","a","an",
-                          "expert","experienced","mid","level","ii","iii"}
-
-                s_words = set(s_exp.split()) - filler
-                t_words = set(t_exp.split()) - filler
-
-                if not s_words:
-                    return True
-
-                # Direct word match
-                if s_words & t_words:
-                    return True
-
-                # Semantic domain match — search and title in same domain group
-                for domain in _DOMAINS:
-                    s_in = bool(s_words & domain)
-                    t_in = bool(t_words & domain)
-                    if s_in and t_in:
-                        return True
-
-                return False
-
-            # Location-only mode: smart title filter based on user's selected roles
             _is_location_only = not job_keyword or not job_keyword.strip()
 
-            if _is_location_only:
-                # Stage 1: Is this job in the same domain as the user's profile?
-                # Use the roles the user selected to infer their domain
-                def _is_domain_match(job_title: str, profile_roles: list) -> bool:
-                    """
-                    Returns True if job_title is plausibly in the same domain
-                    as the user's profile roles. Skips obvious non-matches like
-                    Receptionist/Nurse/Driver without calling Claude API.
-                    """
-                    t = job_title.lower()
-
-                    # Hard exclusions — never relevant to tech profiles
-                    _EXCLUDE = {
-                        "receptionist","nurse","nursing","physician","doctor","dentist",
-                        "pharmacist","therapist","counselor","social worker","teacher",
-                        "driver","delivery","warehouse","forklift","cashier","retail",
-                        "barista","chef","cook","server","bartender","housekeeper",
-                        "cleaner","janitor","security guard","sales associate",
-                        "real estate","loan officer","insurance agent","hair","stylist",
-                        "electrician","plumber","carpenter","mechanic","welder",
-                        "administrative assistant","office manager","paralegal",
-                        "legal assistant","caregiver","home health",
-                    }
-                    for excl in _EXCLUDE:
-                        if excl in t:
-                            return False
-
-                    # Broad tech / engineering keywords — accept any of these
-                    _TECH = {
-                        "software","engineer","developer","programmer","coder",
-                        "backend","frontend","full stack","fullstack","web",
-                        "mobile","ios","android","cloud","devops","sre","platform",
-                        "infrastructure","network","data","database","dba","analytics",
-                        "machine learning","ml","ai","artificial intelligence",
-                        "deep learning","nlp","computer vision","data science",
-                        "security","cybersecurity","qa","quality","test","automation",
-                        "architect","technical","technology","it ","information technology",
-                        "systems","system","api","microservice","kubernetes","docker",
-                        "aws","azure","gcp","python","java","javascript","typescript",
-                        ".net","react","angular","node","golang","rust","scala","c++",
-                        "product manager","technical lead","staff engineer",
-                        "principal engineer","engineering manager","cto","vp engineering",
-                    }
-                    for tech in _TECH:
-                        if tech in t:
-                            return True
-
-                    # Also check against the user's own selected roles
-                    for role in (profile_roles or []):
-                        role_words = set(role.lower().split())
-                        title_words = set(t.split())
-                        if role_words & title_words:
-                            return True
-
-                    # Unknown — let Claude decide (don't skip)
-                    return True
-
-                _profile_roles = getattr(my_profile, "get", lambda k,d=None: d)(
-                    "target_roles", []
-                ) if hasattr(my_profile, "get") else []
-
-                if not _is_domain_match(job.get("title",""), _profile_roles):
-                    log("Location-only: SKIP '%s' — not in tech/engineering domain" % title_short)
-                    print("     <-  Location filter: not a tech role — skipping.", flush=True)
-                    if db_row_id and db_row_id > 0:
-                        try:
-                            tracker.update_job_relevance(
-                                db_row_id, job,
-                                {"is_relevant": False, "match_score": 0,
-                                 "reason": "Location-only: not in tech/engineering domain"},
-                                search_role="(location only)", apply_mode=apply_mode)
-                        except Exception:
-                            pass
-                    continue
-                # Passed domain check → proceed to Claude JD analysis below
-
-            elif not _title_relevant(job.get("title",""), job_keyword):
-                log("Pre-filter: SKIP \'%s\' — title not related to search \'%s\'" % (
+            if not _is_location_only and not _title_relevant(
+                    job.get("title",""), job_keyword, my_prof=my_profile):
+                log("Pre-filter: SKIP '%s' — title not related to '%s'" % (
                     title_short, job_keyword))
                 print("     <-  Pre-filter skip: title not related to search term.")
                 if db_row_id and db_row_id > 0:
@@ -574,6 +442,7 @@ async def run_applications(
                     except Exception:
                         pass
                 continue
+
 
             # Create transaction tracker — follows this job through all stages
             _tx = PipelineTransaction(job.get("title",""), job.get("company",""))

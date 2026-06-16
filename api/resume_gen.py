@@ -88,8 +88,8 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 # DELAY_BETWEEN_CALLS spaces out API calls so a run of 20 resumes
 # does not hit the rate limit in a burst.
 DELAY_BETWEEN_CALLS = 3      # seconds to wait between each resume
-MAX_RETRIES         = 4      # attempts per resume if rate-limited
-RETRY_BACKOFF       = 10     # base seconds to wait after a rate-limit error
+MAX_RETRIES         = 5      # attempts per resume (rate limit + 500 errors)
+RETRY_BACKOFF       = 5      # base seconds — exponential: 5, 10, 20, 40, 80s
 
 
 def flatten_skills(skills: dict) -> list:
@@ -809,14 +809,25 @@ def _tailor_with_retry(profile: dict, job_description: str, job: dict = None) ->
             return tailor_resume_with_ai(profile, job_description, job=job)
         except Exception as e:
             msg = str(e).lower()
-            is_rate_limit = (
+            err_code = str(getattr(e, "status_code", "") or "")
+
+            is_retryable = (
+                # Rate limit
                 "rate" in msg or "429" in msg or "overloaded" in msg
                 or "529" in msg
+                # Anthropic server error — transient, always worth retrying
+                or "500" in msg or "500" in err_code
+                or "internal server error" in msg
+                or "api_error" in msg
+                # Timeout / network blip
+                or "timeout" in msg or "timed out" in msg
+                or "connection" in msg
             )
-            if is_rate_limit and attempt < MAX_RETRIES:
-                wait = RETRY_BACKOFF * attempt
-                print(f"      [...] Rate limited -- waiting {wait}s "
-                      f"(attempt {attempt}/{MAX_RETRIES})...")
+
+            if is_retryable and attempt < MAX_RETRIES:
+                wait = RETRY_BACKOFF * (2 ** (attempt - 1))  # exponential
+                print(f"      [...] API error ({type(e).__name__}) -- "
+                      f"retrying in {wait}s (attempt {attempt}/{MAX_RETRIES})...")
                 time.sleep(wait)
                 continue
             raise
@@ -995,9 +1006,14 @@ def batch_generate_resumes(profile: dict, output_dirs: dict,
             if not val_passed:
                 log_warn("Validation failed (%s) — retrying at temp=0.3" % val_reason)
                 try:
-                    split2   = prompt.find("CANDIDATE PROFILE:")
-                    sys_txt2 = prompt[:split2].strip() if split2 > 0 else ""
-                    usr_txt2 = prompt[split2:].strip() if split2 > 0 else prompt
+                    # Rebuild minimal retry prompt from available data
+                    retry_txt = (
+                        "Fix this resume JSON to include quantified metrics "
+                        "and use these JD keywords: " +
+                        ", ".join(jd_meta_for_val.get("skills", [])[:5])
+                    )
+                    sys_txt2 = ""
+                    usr_txt2 = retry_txt
                     msg2 = client.messages.create(
                         model=AI_MODEL,
                         max_tokens=6000,
