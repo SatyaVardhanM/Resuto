@@ -24,12 +24,13 @@ except ImportError as _e:
 # playwright imported lazily inside main() — avoids crash on module load
 async_playwright = None   # populated at runtime
 
-# Lazy imports - resolved at runtime after sys.path is confirmed
-continuous_job_search        = None
-create_logged_in_context     = None
-minimize_browser             = None
-check_job_relevance          = None
-print_relevance_report       = None
+# These are imported lazily inside main() and run_applications()
+# to avoid module-level import failures in Nuitka standalone builds
+continuous_job_search    = None  # imported in run_applications()
+create_logged_in_context = None  # imported in main()
+minimize_browser         = None  # imported in main()
+check_job_relevance      = None  # imported in run_applications()
+print_relevance_report   = None  # imported in run_applications()
 # New pipeline stage modules — imported with fallback so old installs
 # continue to work even if these files are missing.
 try:
@@ -263,6 +264,10 @@ async def run_applications(
     import db.tracker as tracker
     from api.resume_gen import batch_generate_resumes
     from backend.browser import guided_apply_session
+
+    # Lazy imports — module-level stubs are None; resolve here
+    from backend.scraper import continuous_job_search
+    from api.filter import check_job_relevance, print_relevance_report
 
     job_cap   = min(max_jobs if not unlimited else MAX_JOBS_PER_RUN, MAX_JOBS_PER_RUN)
     scan_cap  = job_cap * MAX_SCAN_MULTIPLIER   # FIX Issue 3: total scan limit
