@@ -647,7 +647,7 @@ class RunMixin:
         self._err_box.tag_config("ts",   foreground=MUTED)
 
     # ── Stats tab ─────────────────────────────────────────────────
-    # Stats methods moved to StatsView — see views/stats_view.py
+    # Stats methods → views/stats_view.py
 
 
     # History methods → views/history_view.py
@@ -1279,17 +1279,3 @@ class RunMixin:
     def _on_review_done(self):
         self._refresh_review_btn()
         self._refresh_stats()
-
-# ══════════════════════════════════════════════════════════════════
-# IntakeWindow — modal Toplevel that walks the user through resume
-# intake questions one by one, then generates resume_data.xml.
-# ══════════════════════════════════════════════════════════════════
-
-from frontend.views.dialogs import (
-    IntakeWindow, ProfileViewWindow, ReviewWindow,
-)
-
-from frontend.views.auth_view import RegistrationWindow
-from frontend.views.stats_view   import StatsView
-from frontend.views.settings_view import SettingsView
-from frontend.views.history_view  import HistoryView
