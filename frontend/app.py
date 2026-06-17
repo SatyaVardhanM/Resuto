@@ -39,6 +39,7 @@ from frontend.constants import (
     ACCENT, ACCENT_HV, DANGER, SUCCESS, WARNING, STRETCH, MUTED,
     FG, FG_SOFT, FG_DIM,
     F, _init_fonts, _FONTS, _BASE_SIZE, _load_font_pref,
+    _settings_file, _load_api_key, _save_api_key, _clear_api_key,
 )
 
 def _save_font_pref(size: int) -> None:
@@ -232,7 +233,7 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
         if not _license_ok:
             _ok = RegistrationWindow.run_gate(self)
             if not _ok:
-                self.destroy()
+                self.destroy() 
                 return
 
         self.title(APP_TITLE)
@@ -511,3 +512,122 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
             self.destroy()
 
     # _open_review_window/_on_review_done → views/run_view.py
+
+
+if __name__ == "__main__":
+    # ── Bot mode — launched by the GUI as a subprocess ────────────
+    # When running as a PyInstaller exe, the GUI spawns itself with
+    # --bot-mode to run the orchestrator instead of opening another window.
+    if "--install-browsers" in sys.argv:
+        # Install Playwright Chromium — called from installer or user
+        import subprocess as _sp
+        print("Installing Playwright Chromium browser...", flush=True)
+        r = _sp.run([sys.executable, "-m", "playwright", "install", "chromium"],
+                    capture_output=False)
+        sys.exit(r.returncode)
+
+    if "--bot-mode" in sys.argv:
+        # Wrap EVERYTHING in try/except — no silent crash possible
+        try:
+            sys.argv.remove("--bot-mode")
+            import asyncio
+
+            # Use sys.executable.parent — reliable in Nuitka (never use __file__ which can be None)
+            _root = str(Path(sys.executable).parent)
+            if _root not in sys.path:
+                sys.path.insert(0, _root)
+
+            def _getarg(flag, default=""):
+                try: return sys.argv[sys.argv.index(flag) + 1]
+                except (ValueError, IndexError): return default
+
+            print("[BOT] Step 1: importing orchestrator...", flush=True)
+            from backend.orchestrator import main as _bot_main
+            print("[BOT] Step 2: importing settings...", flush=True)
+            from core.settings import get_settings as _gs2
+            print("[BOT] Step 3: building gui_args...", flush=True)
+
+            gui_args = type("A", (), {
+                "gui":              True,
+                "location":         _getarg("--location", ""),
+                "max_jobs":         int(_getarg("--max-jobs", "5") or "5"),
+                "mode":             _getarg("--mode", "easy_apply"),
+                "roles":            sys.argv[sys.argv.index("--roles") + 1:]
+                                    if "--roles" in sys.argv else [],
+                "clear_runs":       "--clear-runs" in sys.argv,
+                "application_mode": _gs2().get("application_mode", "continuous"),
+            })()
+
+            print("[BOT] Step 4: starting asyncio run...", flush=True)
+            asyncio.run(_bot_main(gui_args=gui_args))
+            print("[BOT] Done.", flush=True)
+
+        except (KeyboardInterrupt, EOFError):
+            pass
+        except Exception as _bot_err:
+            import traceback as _tb
+            full_tb = _tb.format_exc()
+            # Write to log file so Open Log shows it
+            try:
+                from core.logger import _get_log_file
+                import os as _os2
+                _lp = _get_log_file()
+                _os2.makedirs(_os2.path.dirname(_lp), exist_ok=True)
+                with open(_lp, "a", encoding="utf-8") as _lf:
+                    _lf.write("\n[BOT CRASH]\n" + full_tb + "\n")
+            except Exception:
+                pass
+            # Print each line so GUI traceback buffer captures all
+            for _line in full_tb.split("\n"):
+                if _line.strip():
+                    print(_line, flush=True)
+            print("[!!] " + type(_bot_err).__name__ + ": " + str(_bot_err), flush=True)
+            sys.exit(1)
+
+        sys.exit(0)
+
+
+
+    # ── Normal GUI mode ───────────────────────────────────────────
+    log = Path(sys.executable).parent / "app_error.log"
+    try:
+        app = App()
+        # Only call mainloop if the window wasn't destroyed during __init__
+        # (e.g. registration denied or user closed the gate window)
+        try:
+            if app.winfo_exists():
+                app.mainloop()
+        except Exception:
+            pass
+    except Exception:
+        err = traceback.format_exc()
+        # Ignore clean exit errors (TclError from destroyed window)
+        if "can't invoke" in err or "application has been destroyed" in err:
+            pass
+        else:
+            try:
+                log.write_text(err, encoding="utf-8")
+            except Exception:
+                pass
+            try:
+                import tkinter as _tk
+                _r = _tk.Tk()
+                _r.title("Startup Error")
+                _r.geometry("700x420")
+                _r.configure(bg="#0F1117")
+                _tk.Label(_r, text="Resuto — Startup Error",
+                          bg="#0F1117", fg="#E84545",
+                          font=("Segoe UI", 13, "bold")).pack(pady=(16,4))
+                _tk.Label(_r, text=f"Log: {log}",
+                          bg="#0F1117", fg="#6B7280",
+                          font=("Segoe UI", 9)).pack()
+                tb = _tk.Text(_r, bg="#1C1F26", fg="#F1F2F4",
+                              font=("Consolas", 9), wrap="word")
+                tb.pack(fill="both", expand=True, padx=12, pady=8)
+                tb.insert("end", err)
+                tb.configure(state="disabled")
+                _tk.Button(_r, text="Close", command=_r.destroy,
+                           bg="#2A2D35", fg="white").pack(pady=(0,12))
+                _r.mainloop()
+            except Exception:
+                pass
