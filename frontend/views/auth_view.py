@@ -10,6 +10,9 @@ import sys
 import threading
 
 import customtkinter as ctk
+import queue
+import re
+import time
 
 from frontend.constants import (
     BG, BG_CARD, BG_FIELD, BG_HOVER,
