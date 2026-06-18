@@ -40,17 +40,8 @@ from frontend.constants import (
     FG, FG_SOFT, FG_DIM,
     F, _init_fonts, _FONTS, _BASE_SIZE, _load_font_pref,
     _settings_file, _load_api_key, _save_api_key, _clear_api_key,
+    _save_font_pref,
 )
-
-def _save_font_pref(size: int) -> None:
-    """Persist base font size to local_settings.json."""
-    try:
-        p = _settings_file()
-        d = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
-        d["font_size"] = size
-        p.write_text(json.dumps(d, indent=2), encoding="utf-8")
-    except Exception:
-        pass
 
 # Fonts are initialised inside App.__init__() after CTk root exists.
 

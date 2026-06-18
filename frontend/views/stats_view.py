@@ -10,6 +10,8 @@ import math
 import threading
 from datetime import datetime
 
+import tkinter as tk
+from tkinter import messagebox
 import customtkinter as ctk
 import queue
 import re
@@ -31,21 +33,21 @@ class StatsMixin:
     """Statistics tab — read-only, polls DB every 30s (2s when live)."""
 
     def _build_stats(self):
-        f = self.app._tabs["stats"]
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(0, weight=0)  # header
-        self.grid_rowconfigure(1, weight=0)  # activity strip
-        self.grid_rowconfigure(2, weight=0)  # stat cards
-        self.grid_rowconfigure(3, weight=1)  # mid row (donut + list) — gets all space
+        f = self._tabs["stats"]
+        f.grid_columnconfigure(0, weight=1)
+        f.grid_rowconfigure(0, weight=0)  # header
+        f.grid_rowconfigure(1, weight=0)  # activity strip
+        f.grid_rowconfigure(2, weight=0)  # stat cards
+        f.grid_rowconfigure(3, weight=1)  # mid row (donut + list) — gets all space
 
         # Row 0: header
-        hdr = ctk.CTkFrame(self, fg_color="transparent")
+        hdr = ctk.CTkFrame(f, fg_color="transparent")
         hdr.grid(row=0, column=0, sticky="ew", padx=20, pady=(14, 4))
         ctk.CTkLabel(hdr, text="Application Stats",
                      font=F("body_b"), text_color=FG).pack(side="left")
-        self.app._live_dot = ctk.CTkLabel(hdr, text="● Live",
+        self._live_dot = ctk.CTkLabel(hdr, text="● Live",
                                        font=F("small"), text_color=MUTED)
-        self.app._live_dot.pack(side="right")
+        self._live_dot.pack(side="right")
 
         # Review button — enabled only when re-apply candidates exist
         self._review_btn = ctk.CTkButton(
@@ -57,7 +59,7 @@ class StatsMixin:
         self._review_btn.pack(side="right", padx=(0, 12))
 
         # Row 1: activity strip (hidden until bot runs)
-        self._act_strip = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=8)
+        self._act_strip = ctk.CTkFrame(f, fg_color=BG_CARD, corner_radius=8)
         self._act_role  = ctk.CTkLabel(self._act_strip, text="",
                                         font=F("label_b"), text_color=ACCENT, anchor="w")
         self._act_role.pack(anchor="w", padx=14, pady=(8, 0))
@@ -68,7 +70,7 @@ class StatsMixin:
         self._act_strip_visible = False
 
         # Row 2: stat cards
-        self._cards_row = ctk.CTkFrame(self, fg_color="transparent")
+        self._cards_row = ctk.CTkFrame(f, fg_color="transparent")
         self._cards_row.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 8))
         self._stat_vars = {}
         self._cards_row.grid_columnconfigure((0,1,2,3,4), weight=1)
@@ -93,7 +95,7 @@ class StatsMixin:
 
 
         # Middle: donut + job list
-        mid = ctk.CTkFrame(self, fg_color="transparent")
+        mid = ctk.CTkFrame(f, fg_color="transparent")
         mid.grid(row=3, column=0, sticky="nsew", padx=20, pady=(0, 8))
         mid.grid_columnconfigure(1, weight=1)
         mid.grid_rowconfigure(0, weight=1)
@@ -386,9 +388,9 @@ class StatsMixin:
         _poll picks it up and calls _apply_stats_data(data).
         """
         active = getattr(self, "_active_tab", 0)
-        if self.app._live or active == 2:
+        if self._live or active == 2:
             threading.Thread(target=self._bg_fetch_stats, daemon=True).start()
-        interval = 2000 if self.app._live else 30000
+        interval = 2000 if self._live else 30000
         self._stats_after_id = self.after(interval, self._sched_stats)
 
     def _bg_fetch_stats(self):
@@ -397,6 +399,6 @@ class StatsMixin:
             # Counters filter by bot run start — Recent always shows last 12
             bot_since = getattr(self, "_bot_start", None)
             data = _read_stats(since=bot_since)
-            self.app._q.put(("stats_data", data))
+            self._q.put(("stats_data", data))
         except Exception:
             pass

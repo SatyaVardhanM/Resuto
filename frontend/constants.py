@@ -195,3 +195,15 @@ def _load_font_pref() -> int:
     except Exception:
         pass
     return 14
+
+
+def _save_font_pref(size: int) -> None:
+    """Persist base font size to local_settings.json."""
+    import json
+    try:
+        p = _settings_file()
+        d = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        d["font_size"] = size
+        p.write_text(json.dumps(d, indent=2), encoding="utf-8")
+    except Exception:
+        pass

@@ -3,6 +3,8 @@ frontend/views/history_view.py
 ──────────────────────────────
 HistoryView — job history tab.
 """
+import tkinter as tk
+from tkinter import messagebox
 import json
 import os
 import sqlite3
@@ -17,6 +19,7 @@ import queue
 import subprocess
 import time
 
+from frontend.bot_runner import BotRunner
 from frontend.constants import (
     BG, BG_CARD, BG_FIELD, BG_HOVER,
     ACCENT, ACCENT_HV, DANGER, SUCCESS, WARNING, STRETCH, MUTED,

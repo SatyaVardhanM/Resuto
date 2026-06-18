@@ -5,6 +5,9 @@ SettingsView — configuration tab.
 Handles: API key, XML path, Chrome profile, job filters,
          date posted, work auth, font size.
 """
+import tkinter as tk
+from tkinter import messagebox
+from frontend.views.dialogs import IntakeWindow, ProfileViewWindow
 import json
 import os
 import sys
@@ -22,6 +25,7 @@ from frontend.constants import (
     F, _FONT_FAMILY, _FONTS, _BASE_SIZE,
     _init_fonts, _load_font_pref,
     _settings_file, _load_api_key, _save_api_key, _clear_api_key,
+    _load_settings, _save_settings, _save_font_pref,
 )
 
 
@@ -29,7 +33,7 @@ class SettingsMixin:
     """Settings tab — save/load all user preferences."""
 
     def _build_settings(self):
-        f = self
+        f = self._tabs["settings"]
         f.grid_columnconfigure(0, weight=1)
         f.grid_rowconfigure(0, weight=1)
 
@@ -407,6 +411,30 @@ class SettingsMixin:
                 font=F("small"), command=self._save_job_prefs,
             ).pack(side="left", padx=6)
 
+        # ── Application Mode ───────────────────────────────────
+        mode_row = ctk.CTkFrame(pref_card, fg_color="transparent")
+        mode_row.grid(row=13, column=0, columnspan=3, sticky="ew",
+                      padx=16, pady=(0, 14))
+        ctk.CTkLabel(mode_row, text="Apply Mode:",
+                     font=F("small"), text_color=FG
+                     ).pack(side="left", padx=(0, 10))
+        self._app_mode_var = ctk.StringVar(
+            value=prefs.get("application_mode", "continuous"))
+        modes = [
+            ("⚡  Auto (continuous)", "continuous"),
+            ("👁  One at a time",     "one_at_a_time"),
+        ]
+        for _lbl, _val in modes:
+            ctk.CTkRadioButton(
+                mode_row, text=_lbl, variable=self._app_mode_var, value=_val,
+                font=F("small"), command=self._save_job_prefs,
+            ).pack(side="left", padx=6)
+        ctk.CTkLabel(pref_card,
+                     text="One at a time: bot pauses on each job and waits for you to click Apply or Skip.",
+                     font=F("tiny"), text_color=MUTED
+                     ).grid(row=14, column=0, columnspan=3, sticky="w",
+                             padx=16, pady=(0, 8))
+
         # ══ SECTION 3: TEXT SIZE ══════════════════════════════════
         section_label("Text Size")
         size_card = section_card()
@@ -767,6 +795,7 @@ class SettingsMixin:
             "workplace":         ["on_site","remote","hybrid"],
             "easy_apply_only":   True,
             "date_posted":       "any",
+            "application_mode": "continuous",
         }
 
     def _save_job_prefs(self):
@@ -779,6 +808,7 @@ class SettingsMixin:
                                    if var.get()],
             "easy_apply_only":   self._easy_var.get(),
             "date_posted":       self._date_var.get(),
+            "application_mode": self._app_mode_var.get(),
         }
         try:
             p = Path(self._prefs_path())

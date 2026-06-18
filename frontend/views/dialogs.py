@@ -6,6 +6,8 @@ Standalone popup windows:
   - ProfileViewWindow — read-only profile viewer
   - ReviewWindow      — review / download generated resume
 """
+import tkinter as tk
+from tkinter import messagebox
 import os
 import re
 import subprocess

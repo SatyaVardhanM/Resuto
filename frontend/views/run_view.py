@@ -13,6 +13,8 @@ import webbrowser
 from datetime import datetime
 from pathlib import Path
 
+import tkinter as tk
+from tkinter import messagebox
 import customtkinter as ctk
 import queue
 import re
@@ -21,6 +23,7 @@ import subprocess
 import time
 import traceback
 
+from frontend.bot_runner import BotRunner
 from frontend.constants import (
     BG, BG_CARD, BG_FIELD, BG_HOVER,
     ACCENT, ACCENT_HV, DANGER, SUCCESS, WARNING, STRETCH, MUTED,
@@ -860,6 +863,7 @@ class RunMixin:
         if workplace:  args += ["--workplace"]   + workplace
 
         if self._clear_var.get(): args += ["--clear-runs"]
+        args += ["--application-mode", prefs.get("application_mode", "continuous")]
         args += ["--roles"] + selected
 
         # Clear leftover action bar from previous run

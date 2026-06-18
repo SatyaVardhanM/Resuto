@@ -5,6 +5,8 @@ RegistrationWindow — license gate shown on first launch.
 Handles machine-ID registration, approval polling,
 and API key entry before the main App window appears.
 """
+import tkinter as tk
+from tkinter import messagebox
 import os
 import sys
 import threading
