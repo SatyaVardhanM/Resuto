@@ -184,7 +184,13 @@ def _read_history(filt: str) -> list:
         return []
 
 # ── Bot subprocess ─────────────────────────────────────────────────
-from frontend.bot_runner import BotRunner
+from frontend.bot_runner          import BotRunner
+from frontend.views.run_view       import RunMixin
+from frontend.views.history_view   import HistoryMixin
+from frontend.views.stats_view     import StatsMixin
+from frontend.views.settings_view  import SettingsMixin
+from frontend.views.dialogs        import IntakeWindow, ProfileViewWindow, ReviewWindow
+from frontend.views.auth_view      import RegistrationWindow
 
 # ── Main application ───────────────────────────────────────────────
 class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
@@ -233,7 +239,7 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
         if not _license_ok:
             _ok = RegistrationWindow.run_gate(self)
             if not _ok:
-                self.destroy() 
+                self.destroy()
                 return
 
         self.title(APP_TITLE)

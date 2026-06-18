@@ -14,7 +14,7 @@ import customtkinter as ctk
 from frontend.constants import (
     BG, BG_CARD, BG_FIELD, BG_HOVER,
     ACCENT, ACCENT_HV, DANGER, SUCCESS, WARNING, MUTED,
-    FG, FG_DIM, F,
+    FG, FG_DIM, F, _FONT_FAMILY,
 )
 
 
