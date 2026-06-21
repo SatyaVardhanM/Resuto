@@ -8,9 +8,35 @@
   <strong>AI-powered resume tailoring tool — built for the modern job search.</strong>
 </p>
 
-Resuto scans LinkedIn job listings, scores them against your profile using Claude AI, and generates a uniquely tailored resume for each matched role. It does **not** auto-apply to jobs. The goal is simple: every application you send goes in with a resume that speaks directly to that specific job description — increasing your chances of getting past ATS systems and landing interviews.
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white"/>
+  <img src="https://img.shields.io/badge/Platform-Windows-informational?logo=windows"/>
+  <img src="https://img.shields.io/badge/AI-Claude%20API-blueviolet?logo=anthropic"/>
+  <img src="https://img.shields.io/badge/License-MIT-green"/>
+  <img src="https://img.shields.io/badge/CI-GitHub%20Actions-black?logo=githubactions"/>
+</p>
+
+<p align="center">
+  <a href="https://linkedin.com/in/satya-mudiganti">
+    <img src="https://img.shields.io/badge/Built%20by-Satyavardhan%20Mudiganti-0077B5?logo=linkedin"/>
+  </a>
+</p>
+
+---
+
+Resuto scans LinkedIn job listings, scores them against your profile using Claude AI, and generates a uniquely tailored resume for each matched role. It does **not** auto-apply to jobs. Every application you send goes in with a resume that speaks directly to that specific job description — increasing your chances of getting past ATS systems and landing interviews.
 
 > ⚠️ Resuto increases your chances of getting interview calls. It is not a guarantee of employment.
+
+---
+
+## Why I built this
+
+I have 3.5 years of enterprise .NET engineering experience and was applying to jobs the same way everyone else does — sending the same generic resume to every role and getting filtered out by ATS before a human ever read it. Tailoring manually for 20+ applications a week wasn't sustainable.
+
+So I built Resuto. It does the scanning, matching, and rewriting. I do the final review and decide what to send.
+
+It's also a project that let me build something I actually use — combining browser automation, LLM prompt engineering, desktop UI, a CI/CD pipeline, and packaged installer in one codebase.
 
 ---
 
@@ -33,23 +59,16 @@ Resuto hands you a folder of polished, job-specific resumes. What you do with th
 
 ---
 
-## Why this matters
+## Built to demonstrate
 
-Generic resumes get filtered by ATS before a human ever reads them. Tailoring manually for every job is exhausting and doesn't scale. Resuto sits in the middle: it does the scanning, matching, and writing — you do the final review and decide what to send.
+This is a real engineering project, not a tutorial. It covers:
 
----
-
-## Features
-
-- **Profile analysis** — Claude reads your XML resume and suggests matching job titles ranked by fit percentage
-- **Search modes** — Exact role names / Broader terms / Both / Location only
-- **Smart relevance filter** — Two-stage check: fast title pre-filter, then full JD analysis by Claude
-- **Application mode** — Auto (continuous scan) or One-at-a-time (review each job before resume is generated)
-- **History tab** — Track every scanned, matched, skipped, and failed job with filter and pagination
-- **Stats dashboard** — Live donut chart, match scores, session summaries
-- **Date & filter controls** — Experience level, job type, workplace type, date posted, Easy Apply toggle
-- **Resume preview** — Review the generated resume before downloading
-- **Font & theme** — Dark UI, adjustable font size, fully keyboard navigable
+- **Prompt engineering at production level** — multi-stage validation, hallucination prevention, structured XML output parsing, two-model strategy (Haiku for fast filtering, Sonnet for generation)
+- **Async browser automation** — Playwright with human-like timing, anti-detection headers, retry logic on LinkedIn loading errors, pagination handling
+- **Desktop application architecture** — 5,500+ line CTk app split into mixin-based feature modules with clean separation of UI and logic
+- **LLM pipeline design** — relevance scoring → pre-filter → full JD analysis → resume generation → output validation, with exponential backoff on API failures
+- **Data pipeline** — SQLite job tracker with pagination, multi-filter history view, dedup, and phase-level status tracking
+- **CI/CD + packaging** — GitHub Actions workflow, Nuitka standalone Windows compilation, Inno Setup installer, code-signed binary, automated secret injection
 
 ---
 
@@ -58,12 +77,26 @@ Generic resumes get filtered by ATS before a human ever reads them. Tailoring ma
 | Layer | Technology |
 |---|---|
 | Desktop UI | Python · CustomTkinter |
-| AI / LLM | Anthropic Claude API (Haiku for filtering, Sonnet for resume generation) |
+| AI / LLM | Anthropic Claude API (Haiku + Sonnet) |
 | Browser automation | Playwright (Chromium) |
 | Database | SQLite |
 | Resume output | python-docx · WeasyPrint (PDF) |
-| Packaging | Nuitka (standalone Windows exe) · Inno Setup (installer) |
+| Packaging | Nuitka (standalone exe) · Inno Setup (installer) |
 | CI/CD | GitHub Actions |
+
+---
+
+## Features
+
+- **Profile analysis** — Claude reads your XML resume and suggests matching job titles ranked by fit percentage
+- **Search modes** — Exact role names / Broader terms / Both / Location only
+- **Smart relevance filter** — Two-stage check: fast title pre-filter then full JD analysis by Claude
+- **Application mode** — Auto (continuous scan) or One-at-a-time (review each job before resume is generated)
+- **History tab** — Track every scanned, matched, skipped, and failed job with filter and pagination
+- **Stats dashboard** — Live donut chart, match scores, session summaries
+- **Filter controls** — Experience level, job type, workplace type, date posted, Easy Apply toggle
+- **Resume preview** — Review the generated resume before downloading
+- **Dark UI** — Adjustable font size, fully keyboard navigable
 
 ---
 
@@ -88,13 +121,28 @@ Your XML profile
   Exports DOCX + PDF named after the role and company
 ```
 
-The prompt engineering behind the generation enforces strict rules: no invented metrics, no fabricated tools, no fake titles. If a skill isn't in your profile, it won't appear in the resume. What changes is the *emphasis and framing* — the same experience described in language the hiring manager for that specific role actually uses.
+Strict prompt rules: no invented metrics, no fabricated tools, no fake titles. If a skill isn't in your profile, it won't appear in the resume. What changes is the *emphasis and framing* — the same experience described in language the hiring manager for that specific role actually uses.
 
 ---
 
-## Screenshots
+## Quick start
 
-> *(Coming soon)*
+```bash
+# Clone the repo
+git clone https://github.com/SatyaVardhanM/Resuto.git
+cd Resuto
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Install Playwright browsers
+playwright install chromium
+
+# Run
+python frontend/app.py
+```
+
+You'll need an [Anthropic API key](https://console.anthropic.com/) entered on first launch.
 
 ---
 
@@ -126,16 +174,9 @@ resuto/
 
 ---
 
-## Built to demonstrate
+## Screenshots
 
-This project was built as a real engineering challenge, not a tutorial project. It covers:
-
-- **Prompt engineering at production level** — multi-stage validation, hallucination prevention, structured output parsing
-- **Async browser automation** — Playwright with human-like timing, anti-detection, retry logic, error page detection
-- **Desktop application architecture** — mixin-based modular CTk app, clean separation of UI and logic
-- **LLM pipeline design** — two-model strategy (cheap model for filtering, powerful model for generation), exponential backoff, 500/timeout retry
-- **Data pipeline** — SQLite job tracker with pagination, filter, dedup, and phase tracking
-- **CI/CD + packaging** — GitHub Actions, Nuitka standalone compilation, Inno Setup installer, code-signed binary
+> *(Coming soon — app UI, history tab, resume output)*
 
 ---
 
@@ -148,6 +189,16 @@ Resuto is a resume assistance tool. It does not submit job applications on your 
 ## License
 
 MIT License — see [LICENSE](LICENSE)
+
+---
+
+## Author
+
+**Satyavardhan Mudiganti**
+Software Engineer · 3.5 years enterprise .NET · MS in Computer Information Systems (AI concentration)
+
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-satya--mudiganti-0077B5?logo=linkedin)](https://linkedin.com/in/satya-mudiganti)
+[![GitHub](https://img.shields.io/badge/GitHub-SatyaVardhanM-181717?logo=github)](https://github.com/SatyaVardhanM)
 
 ---
 
