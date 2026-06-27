@@ -401,20 +401,37 @@ There is no Q&A conversation — extract everything from the resume text alone.
 Return ONLY valid XML starting with <?xml version="1.0" encoding="UTF-8"?>
 No preamble, no explanation, no markdown fences. Raw XML only.
 
-Extract and infer as much as possible from the resume text:
-- Personal info: name, email, phone, location, LinkedIn, GitHub
-- Work experience: all jobs with titles, companies, dates, bullet points
-- Education: degrees, schools, graduation years
-- Skills: categorise into languages, frameworks, tools, databases, practices
-- Projects: names, tech stacks, descriptions
-- Volunteer: roles and organisations
+━━━ RESUME FORMAT PATTERNS TO HANDLE ━━━
+Resumes come in many formats. Handle ALL of these:
+
+1. SKILLS as numbered lists:
+   "1. Cloud Infrastructure: AWS, GCP"
+   "2. Scripting: JavaScript, Python"
+   → Extract category name + skills. Use the category label as the skill group name.
+
+2. ENVIRONMENT lines at end of each job:
+   "Environment: ITSM, Flow Designer, JavaScript, AWS, GCP"
+   → These are the tech stack for that role. Merge them into a <tech_stack> tag
+     inside the job, AND include unique tools in the skills section.
+
+3. MISSING SECTIONS:
+   If GitHub, projects, education, or volunteer are absent → use empty tags:
+   <projects/>, <volunteer/>, <github>[PLACEHOLDER]</github>
+   Never skip a section entirely — always include the tag even if empty.
+
+4. IT CONSULTANT / SERVICENOW / SAP / ITSM resumes:
+   These often have no GitHub or personal projects. That is fine.
+   Map platform-specific skills (GlideScript, Flow Designer, IRE Rules etc.)
+   into the tools_platforms skill category.
+
+5. BULLET POINTS:
+   Keep all bullets exactly as written. Do not paraphrase or summarise.
+   Include ALL bullets for ALL jobs — do not truncate.
 
 ━━━ RULES ━━━
 - Use ONLY information present in the resume text — never invent
 - Use [PLACEHOLDER] for genuinely missing values like GitHub if not shown
-- Keep all bullet points as written — do not paraphrase or summarise
-- Include ALL jobs and ALL projects — do not drop any
-- For education <year>: use the exact year shown in the resume
+- Include ALL jobs — do not drop any
 - Return ONLY the XML, nothing else
 
 ━━━ STRUCTURE ━━━

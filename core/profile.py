@@ -116,7 +116,12 @@ def load_profile_from_xml(xml_path: str = None) -> dict:
                     for bullet in bullets_section.findall("bullet")
                     if bullet.text
                 ]
-            
+
+            # tech_stack — from Environment: lines (IT consultant resumes)
+            tech_stack = job.findtext("tech_stack", "").strip()
+            if tech_stack:
+                job_data["tech_stack"] = tech_stack
+
             profile["experience"].append(job_data)
     
     # -- Education -----------------------------------------------
@@ -136,10 +141,17 @@ def load_profile_from_xml(xml_path: str = None) -> dict:
     projects_section = root.find("projects")
     if projects_section is not None:
         for project in projects_section.findall("project"):
+            proj_bullets_sec = project.find("bullets")
+            proj_bullets = []
+            if proj_bullets_sec is not None:
+                proj_bullets = [
+                    b.text.strip() for b in proj_bullets_sec.findall("bullet") if b.text
+                ]
             project_data = {
                 "name":        project.findtext("name", "").strip(),
                 "tech":        project.findtext("tech", "").strip(),
                 "description": project.findtext("description", "").strip(),
+                "bullets":     proj_bullets,
             }
             profile["projects"].append(project_data)
     

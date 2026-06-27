@@ -204,6 +204,38 @@ def read_pdf(path: str) -> str:
         return f"{_PDF_ERROR_PREFIX}Could not read PDF: {e}"
 
 
+
+def preprocess_resume_text(text: str) -> str:
+    """
+    Normalize resume text before sending to Claude.
+    Handles IT consultant / platform-specialist resume patterns
+    that differ from standard SWE resumes.
+    """
+    import re
+    lines = text.split("\n")
+    cleaned = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        # ── Numbered skill categories: "1. Cloud Infrastructure: AWS, GCP"
+        # Keep as-is — the prompt now understands these
+        # Just ensure the number prefix is clean
+        m = re.match(r"^\d+\.\s+(.+)", stripped)
+        if m:
+            cleaned.append(m.group(1))
+            continue
+
+        # ── Environment lines: tag them clearly for Claude
+        if re.match(r"^Environment\s*:", stripped, re.IGNORECASE):
+            cleaned.append("\n[TECH STACK FOR ABOVE ROLE]: " + stripped)
+            continue
+
+        cleaned.append(line)
+
+    return "\n".join(cleaned)
+
+
 def read_docx(path: str) -> str:
     """Extracts text from a DOCX file."""
     try:
@@ -229,13 +261,17 @@ def read_resume_file(path: str) -> str:
 
     ext = os.path.splitext(path)[1].lower()
     if ext == ".pdf":
-        return read_pdf(path)
+        raw = read_pdf(path)
     elif ext in (".docx", ".doc"):
-        return read_docx(path)
+        raw = read_docx(path)
     else:
         print(f"  [ERR] Unsupported file type: {ext}")
         print("     Only .pdf and .docx are supported.")
         return ""
+    # Normalize resume text for any template/format
+    if raw and not raw.startswith("PDF_ERROR:"):
+        raw = preprocess_resume_text(raw)
+    return raw
 
 
 # -- Step 1: Generate questions ------------------------------------
