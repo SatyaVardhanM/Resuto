@@ -416,6 +416,84 @@ Generate the complete resume_data.xml now."""
 
 
 # -- Step 4: Validate XML ------------------------------------------
+
+def sanitize_xml(raw: str) -> str:
+    """
+    Comprehensive XML sanitizer for Claude-generated resume XML.
+
+    Fixes:
+    - Markdown code fences
+    - Bare & not part of a valid XML entity
+    - < in text nodes (not part of a tag)
+    - Smart/curly quotes, em-dashes, ellipsis, NBSP
+    - XML 1.0 prohibited Unicode code points
+    - Control characters
+    - Surrogate pair characters from PDF extraction
+    """
+    import re
+
+    s = raw.strip()
+
+    # Strip markdown code fences
+    s = re.sub(r'^```(?:xml)?\n?', '', s, flags=re.M)
+    s = re.sub(r'\n?```$', '', s, flags=re.M)
+    s = s.strip()
+
+    # Trim garbage before first XML tag
+    idx = s.find('<')
+    if idx > 0:
+        s = s[idx:]
+
+    # Smart / curly quotes -> straight
+    for old, new in [('\u2018',"'"),('\u2019',"'"),('\u201c','"'),('\u201d','"')]:
+        s = s.replace(old, new)
+
+    # Em-dash, en-dash -> hyphen
+    s = s.replace('\u2014', '-').replace('\u2013', '-')
+
+    # Misc unicode replacements
+    s = s.replace('\u2026', '...').replace('\u00a0', ' ')
+    s = s.replace('\u2022', '-').replace('\u25cf', '-')   # bullet chars
+
+    # Remove XML 1.0 prohibited characters
+    # Valid XML 1.0 chars: #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD]
+    s = re.sub(
+        r'[^\x09\x0A\x0D\x20-\uD7FF\uE000-\uFFFD]',
+        '', s
+    )
+
+    # Remove remaining ASCII control chars (except tab/LF/CR)
+    s = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', s)
+
+    # Fix bare & not part of a valid entity
+    s = re.sub(
+        r'&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)',
+        '&amp;', s
+    )
+
+    # Fix < inside text nodes (< not followed by valid tag start chars)
+    # Valid tag starts: letter, _, /, !, ?
+    s = re.sub(r'<(?![A-Za-z_/!?])', '&lt;', s)
+
+    return s
+
+
+def safe_parse_xml_file(path: str):
+    """
+    Read an XML file from disk, sanitize, and parse.
+    Use this instead of ET.parse() everywhere.
+    """
+    import xml.etree.ElementTree as ET
+    raw = open(path, encoding='utf-8', errors='replace').read()
+    clean = sanitize_xml(raw)
+    # Write sanitized version back so future reads are also clean
+    try:
+        open(path, 'w', encoding='utf-8').write(clean)
+    except Exception:
+        pass
+    return ET.fromstring(clean)
+
+
 def validate_xml(xml_string: str) -> bool:
     """
     Checks that the generated XML is valid and has the required sections.
@@ -423,7 +501,7 @@ def validate_xml(xml_string: str) -> bool:
     """
     try:
         import xml.etree.ElementTree as ET
-        root = ET.fromstring(xml_string)
+        root = ET.fromstring(sanitize_xml(xml_string))
         required = ["personal", "summary", "skills", "experience", "education"]
         missing  = [s for s in required if root.find(s) is None]
         if missing:
@@ -462,8 +540,7 @@ def enhance_experience(xml_path: str) -> str:
     print("  (Type 'skip' on any question you can't answer.)\n")
 
     try:
-        tree = ET.parse(xml_path)
-        root = tree.getroot()
+        root = safe_parse_xml_file(xml_path)
     except Exception as e:
         print(f"  [WARN]  Could not read XML for enhancement: {e}")
         return open(xml_path, encoding="utf-8").read()
@@ -669,6 +746,7 @@ def main():
     attempts   = 0
     while attempts < 3:
         xml_string = generate_xml(resume_text, qa_pairs)
+        xml_string = sanitize_xml(xml_string)
         if validate_xml(xml_string):
             break
         attempts += 1
@@ -735,8 +813,7 @@ def main():
     # Update the XML meta section with the user's choice
     try:
         import xml.etree.ElementTree as ET
-        tree = ET.parse(xml_path)
-        root = tree.getroot()
+        root = safe_parse_xml_file(xml_path)
         meta = root.find("meta")
         if meta is None:
             meta = ET.SubElement(root, "meta")
@@ -775,7 +852,7 @@ def main():
     # -- Extract name for the preview -----------------------------
     try:
         import xml.etree.ElementTree as ET
-        root = ET.fromstring(xml_string)
+        root = ET.fromstring(sanitize_xml(xml_string))
         name = root.findtext("personal/name", "Unknown").strip()
     except Exception:
         name = "Unknown"
@@ -784,7 +861,7 @@ def main():
     # Build a short profile summary note
     try:
         _skills = []
-        _root2  = ET.fromstring(xml_string)
+        _root2  = ET.fromstring(sanitize_xml(xml_string))
         for _s in _root2.findall(".//skill")[:5]:
             _skills.append(_s.text or "")
         note = (
@@ -803,7 +880,7 @@ def main():
     print("\n  [>>] Quick preview of what was captured:\n")
     try:
         import xml.etree.ElementTree as ET
-        root = ET.fromstring(xml_string)
+        root = ET.fromstring(sanitize_xml(xml_string))
 
         name     = root.findtext("personal/name", "").strip()
         email    = root.findtext("personal/email", "").strip()

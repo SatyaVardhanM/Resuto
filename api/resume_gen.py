@@ -376,10 +376,34 @@ Name: {profile['name']}
 Summary (REWRITE COMPLETELY): {profile['summary']}
 All Skills: {json.dumps(all_skills, indent=2)}
 Experience (VERBATIM): {json.dumps(profile['experience'], indent=2)}
-Education: {json.dumps(profile['education'], indent=2)}
+{"Education: " + json.dumps(profile['education'], indent=2) if profile.get('education') else "Education: [Not provided — omit this section entirely from the resume]"}
 
 JOB DESCRIPTION:
 {job_description[:4000]}
+
+CRITICAL RULES FOR THIS RESUME:
+1. Extract the EXACT job title from the JD — put it in "title" field and open the summary with it
+2. Extract the top 10 keywords/technologies from the JD — every one must appear verbatim in skills or bullets
+3. Skills categories must reflect THIS candidate's domain — see rules below
+4. Order skills within each category by JD relevance — most relevant skill listed first
+5. Summary must mirror the JD language in first sentence — if JD says "ServiceNow Architect" write "ServiceNow Architect" not "platform specialist"
+
+SKILLS CATEGORY RULES:
+- Category names must be human-readable — NO underscores ever
+- Derive category names from the candidate's actual domain — do not impose a fixed structure
+- Data formats (JSON, XML, YAML) are NOT languages — group them with Integration or omit from skills
+- Platform names (ServiceNow, Salesforce, SAP) are NOT categories — they are implied by all other skills
+- Frameworks and platform tools are NOT the same category
+- Skills that appear in the JD must appear in the skills section verbatim
+- Maximum 7 categories — merge small categories rather than fragment
+- Order skills within each category by JD relevance — most relevant skill listed first
+
+EXAMPLES by domain (adapt to whatever domain this candidate is in):
+  Platform/consulting (ServiceNow, SAP, Salesforce): "Scripting & Languages", "Platform Modules", "Platform Tools", "Integration & APIs", "Security & Identity", "Cloud & Infrastructure", "Governance & Practices"
+  Software engineering: "Languages", "Frameworks & Libraries", "Cloud & DevOps", "Databases", "Tools & Practices"
+  Data/ML engineering: "Languages", "ML Frameworks", "Data Pipelines", "Cloud Platforms", "Databases & Storage", "MLOps"
+  Cybersecurity: "Security Domains", "Tools & Platforms", "Languages & Scripting", "Frameworks & Standards", "Cloud"
+  These are EXAMPLES — always adapt to the actual profile domain
 """
 
     response_text = ""
@@ -430,6 +454,59 @@ JOB DESCRIPTION:
         raise
 
 
+
+
+def _add_hyperlink(paragraph, text: str, url: str):
+    """
+    Add a clickable hyperlink run to a paragraph.
+    Falls back to plain text if XML manipulation fails.
+    """
+    try:
+        from docx.oxml.ns import qn
+        from docx.oxml import OxmlElement
+        from docx.shared import RGBColor as _RGB
+
+        part  = paragraph.part
+        r_id  = part.relate_to(url,
+                    'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink',
+                    is_external=True)
+
+        hyperlink = OxmlElement('w:hyperlink')
+        hyperlink.set(qn('r:id'), r_id)
+
+        new_run = OxmlElement('w:r')
+        rPr     = OxmlElement('w:rPr')
+
+        # Blue underline style
+        color = OxmlElement('w:color')
+        color.set(qn('w:val'), '0563C1')
+        rPr.append(color)
+
+        u = OxmlElement('w:u')
+        u.set(qn('w:val'), 'single')
+        rPr.append(u)
+
+        new_run.append(rPr)
+        t = OxmlElement('w:t')
+        t.text = text
+        new_run.append(t)
+
+        hyperlink.append(new_run)
+        paragraph._p.append(hyperlink)
+    except Exception:
+        # Fallback: plain text
+        paragraph.add_run(text)
+
+
+def _bullet_style(doc):
+    """Return bullet list style name — falls back to Normal if List Bullet missing."""
+    try:
+        _ = doc.styles["List Bullet"]
+        return "List Bullet"
+    except KeyError:
+        return "Normal"
+
+
 def build_resume_docx(profile: dict, tailored: dict, output_path: str):
     """
     Builds a Word document from the tailored resume data, using
@@ -446,8 +523,6 @@ def build_resume_docx(profile: dict, tailored: dict, output_path: str):
     doc   = Document()
     NAVY  = RGBColor(31, 56, 100)    # accent -- headings & name
     GRAY  = RGBColor(90, 90, 90)     # secondary text
-    BLACK = RGBColor(0, 0, 0)
-
     # Base document font
     style = doc.styles["Normal"]
     style.font.name = "Calibri"
@@ -496,34 +571,112 @@ def build_resume_docx(profile: dict, tailored: dict, output_path: str):
     nr.font.size      = Pt(22)
     nr.font.color.rgb = NAVY
 
+    # -- Professional title (if present) -------------------------
+    # Prefer JD-matched title from Claude output, fall back to profile title
+    title_str = (tailored.get("title") or profile.get("headline") or profile.get("title") or "").strip()
+    # Strip placeholder values
+    if title_str.upper() in ("[PLACEHOLDER]", "PLACEHOLDER", "N/A", "NONE"):
+        title_str = ""
+    if title_str:
+        title_p           = doc.add_paragraph()
+        title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        title_p.paragraph_format.space_after = Pt(2)
+        tr2 = title_p.add_run(title_str)
+        tr2.font.size      = Pt(12)
+        tr2.font.color.rgb = GRAY
+        tr2.italic         = True
+
     # -- Contact line --------------------------------------------
     contact_p           = doc.add_paragraph()
     contact_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     contact_p.paragraph_format.space_after = Pt(4)
-    contact_bits = [
+    # Build contact line — email, phone, location as plain text
+    # LinkedIn and GitHub as clickable hyperlinks
+    plain_bits = [
         profile.get("email", ""),
         profile.get("phone", ""),
         profile.get("location", ""),
-        profile.get("linkedin", ""),
     ]
-    cr = contact_p.add_run("  |  ".join(b for b in contact_bits if b))
-    cr.font.size      = Pt(10.5)
-    cr.font.color.rgb = GRAY
+    plain_text = "  |  ".join(b for b in plain_bits if b)
+    linkedin   = profile.get("linkedin", "").strip()
+    github     = profile.get("github", "").strip()
+
+    # Determine if LinkedIn is a URL or display name
+    def _li_url(val):
+        if val.startswith("http"):
+            return val
+        return f"https://linkedin.com/in/{val.lstrip('/')}"
+
+    if plain_text:
+        cr = contact_p.add_run(plain_text)
+        cr.font.size      = Pt(10.5)
+        cr.font.color.rgb = GRAY
+
+    if linkedin:
+        sep = contact_p.add_run("  |  ")
+        sep.font.size = Pt(10.5)
+        sep.font.color.rgb = GRAY
+        _add_hyperlink(contact_p, linkedin, _li_url(linkedin))
+
+    if github:
+        sep2 = contact_p.add_run("  |  ")
+        sep2.font.size = Pt(10.5)
+        sep2.font.color.rgb = GRAY
+        gh_url = github if github.startswith("http") else f"https://github.com/{github.lstrip('/')}"
+        _add_hyperlink(contact_p, github, gh_url)
 
     # -- Summary -------------------------------------------------
     section_heading("Professional Summary")
     s = doc.add_paragraph()
-    s.paragraph_format.space_after = Pt(2)
+    s.paragraph_format.space_before = Pt(4)
+    s.paragraph_format.space_after  = Pt(2)
     _add_runs(s, tailored.get("summary",""), base_size_pt=11.0)
 
     # -- Skills --------------------------------------------------
-    section_heading("Technical Skills")
+    # Use heading Claude chose based on profile domain
+    _skills_heading = (
+        tailored.get("skills_section_heading") or "Technical Skills"
+    ).strip()
+    # Safety: if Claude returned a long sentence, truncate to the label
+    if len(_skills_heading) > 30:
+        _skills_heading = "Technical Skills"
+    section_heading(_skills_heading)
+
+    def _fmt_category(raw: str) -> str:
+        """Convert JSON key names to display labels.
+        servicenow_modules → ServiceNow Modules
+        tools_platforms    → Tools & Platforms
+        development_components → Development Components
+        security_authentication → Security & Authentication
+        """
+        # Replace underscores with spaces
+        s = raw.replace("_", " ")
+        # Title case each word
+        s = s.title()
+        # Fix common abbreviations
+        for old, new in [
+            ("Servicenow", "ServiceNow"),
+            ("Aws", "AWS"), ("Gcp", "GCP"),
+            ("Api", "API"), ("Apis", "APIs"),
+            ("Ui", "UI"), ("Ux", "UX"),
+            ("Saml", "SAML"), ("Oauth", "OAuth"),
+            ("Sso", "SSO"), ("Sql", "SQL"),
+            ("Ml", "ML"), ("Ai", "AI"),
+            ("Itsm", "ITSM"), ("Itom", "ITOM"),
+            ("Cmdb", "CMDB"), ("Ire", "IRE"),
+            ("Atf", "ATF"),
+        ]:
+            s = s.replace(old, new)
+        # Replace "And" connector word → "&"
+        s = s.replace(" And ", " & ")
+        return s
+
     for category, items in tailored.get("skills_grouped", {}).items():
         if items:
             p = doc.add_paragraph()
             p.paragraph_format.space_before = Pt(2)
             p.paragraph_format.space_after  = Pt(2)
-            label = p.add_run(f"{category}: ")
+            label = p.add_run(f"{_fmt_category(category)}: ")
             label.bold      = True
             label.font.size = Pt(11)
             vals = p.add_run(", ".join(items))
@@ -531,7 +684,7 @@ def build_resume_docx(profile: dict, tailored: dict, output_path: str):
 
     # -- Experience ----------------------------------------------
     section_heading("Experience")
-    for job in tailored["experience"]:
+    for job in (tailored.get("experience") or []):
         # Title - Company  ............................  Duration (right)
         p = doc.add_paragraph()
         p.paragraph_format.space_before = Pt(6)
@@ -544,22 +697,45 @@ def build_resume_docx(profile: dict, tailored: dict, output_path: str):
         tr.font.size = Pt(11)
         cr_ = p.add_run(f" - {job['company']}")
         cr_.font.size = Pt(11)
+        if job.get("location"):
+            lr = p.add_run(f"  ·  {job['location']}")
+            lr.font.size      = Pt(10.5)
+            lr.font.color.rgb = GRAY
 
         dr = p.add_run(f"\t{job['duration']}")
         dr.italic         = True
         dr.font.size      = Pt(10.5)
         dr.font.color.rgb = GRAY
 
-        for bullet in job["bullets"]:
-            bp = doc.add_paragraph(style="List Bullet")
+        for bullet in (job.get("bullets") or []):
+            bp = doc.add_paragraph(style=_bullet_style(doc))
             bp.paragraph_format.left_indent  = Inches(0.25)
             bp.paragraph_format.space_before = Pt(1)
             bp.paragraph_format.space_after  = Pt(1)
             _add_runs(bp, str(bullet), base_size_pt=11.0)
 
+        # Tech stack line — shown only for consulting/platform profiles
+        # Proves recency: recruiter sees which tech was used at which role
+        tech = (job.get("tech_stack") or "").strip()
+        if tech:
+            tp = doc.add_paragraph()
+            tp.paragraph_format.left_indent  = Inches(0.25)
+            tp.paragraph_format.space_before = Pt(2)
+            tp.paragraph_format.space_after  = Pt(4)
+            tlabel = tp.add_run("Tech: ")
+            tlabel.bold            = True
+            tlabel.italic          = True
+            tlabel.font.size       = Pt(9.5)
+            tlabel.font.color.rgb  = GRAY
+            tvals = tp.add_run(tech)
+            tvals.italic           = True
+            tvals.font.size        = Pt(9.5)
+            tvals.font.color.rgb   = GRAY
+
     # -- Projects ------------------------------------------------
-    section_heading("Projects")
-    for proj in tailored["projects"]:
+    if tailored.get("projects"):
+        section_heading("Projects")
+    for proj in tailored.get("projects", []):
         p = doc.add_paragraph()
         p.paragraph_format.space_before = Pt(6)
         p.paragraph_format.space_after  = Pt(1)
@@ -579,16 +755,16 @@ def build_resume_docx(profile: dict, tailored: dict, output_path: str):
             proj_points = [desc] if desc else []
 
         for point in proj_points:
-            dp = doc.add_paragraph(style="List Bullet")
+            dp = doc.add_paragraph(style=_bullet_style(doc))
             dp.paragraph_format.left_indent  = Inches(0.25)
             dp.paragraph_format.space_before = Pt(1)
             dp.paragraph_format.space_after  = Pt(1)
             _add_runs(dp, str(point), base_size_pt=11.0)
-            dr.font.size = Pt(11)
 
     # -- Education -----------------------------------------------
-    section_heading("Education")
-    for edu in profile["education"]:
+    if profile.get("education"):
+        section_heading("Education")
+    for edu in profile.get("education", []):
         p = doc.add_paragraph()
         p.paragraph_format.space_before = Pt(4)
         p.paragraph_format.space_after  = Pt(1)
@@ -598,8 +774,9 @@ def build_resume_docx(profile: dict, tailored: dict, output_path: str):
         er = p.add_run(edu["degree"])
         er.bold      = True
         er.font.size = Pt(11)
-        sr = p.add_run(f" - {edu['school']}")
-        sr.font.size = Pt(11)
+        if edu.get("school"):
+            sr = p.add_run(f" - {edu['school']}")
+            sr.font.size = Pt(11)
 
         yr = p.add_run(f"\t{edu['year']}")
         yr.italic         = True
@@ -619,12 +796,11 @@ def build_resume_docx(profile: dict, tailored: dict, output_path: str):
             or_ = p.add_run(f" - {vol['organization']}")
             or_.font.size = Pt(11)
 
-            dp = doc.add_paragraph(style="List Bullet")
+            dp = doc.add_paragraph(style=_bullet_style(doc))
             dp.paragraph_format.left_indent  = Inches(0.25)
             dp.paragraph_format.space_before = Pt(1)
             dp.paragraph_format.space_after  = Pt(1)
             _add_runs(dp, str(vol.get("description","")), base_size_pt=11.0)
-            dr.font.size = Pt(11)
 
     doc.save(output_path)
     print(f"   [OK] DOCX saved -> {output_path}")

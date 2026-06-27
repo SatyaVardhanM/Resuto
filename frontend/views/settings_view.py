@@ -188,9 +188,18 @@ class SettingsMixin:
             height=36, font=F("small"),
             fg_color=BG_FIELD, hover_color=BG_HOVER,
             command=self._view_profile)
+
+        # Always create download button — shown/hidden based on XML presence
+        self._download_resume_btn = ctk.CTkButton(
+            btn_row, text="⬇  Download Resume",
+            height=36, font=F("small"),
+            fg_color=BG_FIELD, hover_color=BG_HOVER,
+            command=self._download_sample_resume)
+
         # Only show if XML exists
         if Path(self._xml_path()).exists():
-            self._view_profile_btn.pack(side="left")
+            self._view_profile_btn.pack(side="left", padx=(0, 6))
+            self._download_resume_btn.pack(side="left")
 
         # Regenerate prompts button — always visible
         ctk.CTkButton(
@@ -591,7 +600,9 @@ class SettingsMixin:
             xml_path = get_resume_data_path()
             if xml_path and os.path.exists(xml_path):
                 ET.register_namespace("", "")
-                tree = ET.parse(xml_path)
+                from api.intake import safe_parse_xml_file as _safe_parse
+                root_el = _safe_parse(xml_path)
+                tree    = type("T",(),{"getroot": lambda s: root_el})()
                 root = tree.getroot()
                 meta = root.find("meta")
                 if meta is None:
@@ -675,7 +686,8 @@ class SettingsMixin:
         if xml.exists():
             import xml.etree.ElementTree as _ET
             try:
-                root = _ET.parse(str(xml)).getroot()
+                from api.intake import safe_parse_xml_file as _sp
+                root = _sp(str(xml))
                 name = root.findtext(".//name") or "Unknown"
                 return f"✓  Profile loaded  —  {name}"
             except Exception:
@@ -704,7 +716,10 @@ class SettingsMixin:
     def _on_intake_done(self):
         """Called by IntakeWindow when XML is saved."""
         self._resume_status_var.set(self._resume_status_text())
-        self._view_profile_btn.pack(side="left")
+        if hasattr(self, "_view_profile_btn"):
+            self._view_profile_btn.pack(side="left", padx=(0, 6))
+        if hasattr(self, "_download_resume_btn"):
+            self._download_resume_btn.pack(side="left")
         try:
             self._refresh_start_status()
         except Exception:
@@ -765,6 +780,89 @@ class SettingsMixin:
     def _view_profile(self):
         """Open the profile viewer window."""
         ProfileViewWindow(self, self._xml_path())
+
+    def _download_sample_resume(self):
+        """Ask format and save a sample resume from the current profile."""
+        import threading
+        from tkinter import filedialog
+
+        xml = Path(self._xml_path())
+        if not xml.exists():
+            messagebox.showwarning("No Profile", "Upload a resume first.")
+            return
+
+        fmt = messagebox.askquestion("Download Format",
+                                     "Download as DOCX?\n(No = PDF)",
+                                     icon="question")
+        ext = ".docx" if fmt == "yes" else ".pdf"
+
+        try:
+            from core.profile import load_profile_from_xml
+            p = load_profile_from_xml(str(xml))
+            name = (p.get("name") or "Resume").replace(" ", "_")
+        except Exception:
+            name = "Resume"
+
+        out = filedialog.asksaveasfilename(
+            title="Save Sample Resume",
+            initialfile=f"{name}_Sample{ext}",
+            defaultextension=ext,
+            filetypes=[("Word Document", "*.docx"),
+                       ("PDF File", "*.pdf"),
+                       ("All Files", "*.*")])
+        if not out:
+            return
+
+        self._download_resume_btn.configure(state="disabled", text="⏳ Generating...")
+        threading.Thread(target=self._bg_generate_sample,
+                         args=(str(xml), out, ext), daemon=True).start()
+
+    def _bg_generate_sample(self, xml_path: str, out_path: str, ext: str):
+        """Background worker: build DOCX/PDF and save to out_path."""
+        try:
+            from core.profile import load_profile_from_xml
+            from api.resume_gen import build_resume_docx
+
+            profile  = load_profile_from_xml(xml_path)
+            tailored = {
+                "title":          profile.get("headline") or profile.get("title") or "",
+                "summary":        profile.get("summary") or "",
+                "skills_grouped": profile.get("skills") or {},
+                "experience":     profile.get("experience") or [],
+                "projects":       profile.get("projects") or [],
+            }
+
+            tmp_docx = out_path if ext == ".docx" else out_path.replace(".pdf", "_tmp.docx")
+            build_resume_docx(profile, tailored, tmp_docx)
+
+            if ext == ".pdf":
+                try:
+                    import subprocess
+                    subprocess.run(
+                        ["soffice", "--headless", "--convert-to", "pdf",
+                         "--outdir", str(Path(out_path).parent), tmp_docx],
+                        check=True, capture_output=True, timeout=60)
+                    if Path(tmp_docx).exists() and tmp_docx != out_path:
+                        Path(tmp_docx).unlink()
+                except Exception:
+                    final = out_path.replace(".pdf", ".docx")
+                    import shutil; shutil.move(tmp_docx, final)
+                    self.after(0, lambda: messagebox.showinfo(
+                        "Saved as DOCX",
+                        f"LibreOffice not found.\nSaved as DOCX:\n{final}"))
+                    self.after(0, lambda: self._download_resume_btn.configure(
+                        state="normal", text="⬇  Download Resume"))
+                    return
+
+            self.after(0, lambda: messagebox.showinfo("Saved", f"Resume saved:\n{out_path}"))
+            self.after(0, lambda: self._download_resume_btn.configure(
+                state="normal", text="⬇  Download Resume"))
+
+        except Exception as e:
+            self.after(0, lambda: messagebox.showerror(
+                "Error", f"Could not generate resume:\n{str(e)[:120]}"))
+            self.after(0, lambda: self._download_resume_btn.configure(
+                state="normal", text="⬇  Download Resume"))
 
     # ── Job preferences helpers ───────────────────────────────────
 

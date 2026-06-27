@@ -666,7 +666,8 @@ Keep responses conversational — 2-5 sentences is usually right. Longer if you'
             xml_str = raw.strip()
 
             import xml.etree.ElementTree as ET
-            ET.fromstring(xml_str)   # validate
+            from api.intake import sanitize_xml
+            ET.fromstring(sanitize_xml(xml_str))   # validate
             from pathlib import Path
             Path(self._xml_out).parent.mkdir(parents=True, exist_ok=True)
             Path(self._xml_out).write_text(xml_str, encoding="utf-8")
@@ -746,8 +747,8 @@ class ProfileViewWindow(ctk.CTkToplevel):
         scroll.grid_columnconfigure(0, weight=1)
 
         try:
-            import xml.etree.ElementTree as ET
-            root = ET.parse(xml_path).getroot()
+            from api.intake import safe_parse_xml_file
+            root = safe_parse_xml_file(xml_path)
             self._render_profile(scroll, root)
         except Exception as e:
             ctk.CTkLabel(scroll, text=f"Could not read profile: {e}",

@@ -84,3 +84,4 @@ venv/
 env/
 crazyfolk-labs.pfx
 crazyfolk-labs.pfx.b64.txt
+check_creds.py

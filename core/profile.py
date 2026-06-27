@@ -5,6 +5,7 @@ if not getattr(_sys, "frozen", False):
 
 import os
 import xml.etree.ElementTree as ET
+from api.intake import sanitize_xml
 try:
     from core.logger import log, log_warn, log_error
 except Exception:
@@ -46,7 +47,8 @@ def load_profile_from_xml(xml_path: str = None) -> dict:
         )
     
     # Parse XML
-    tree = ET.parse(xml_path)
+    raw = open(xml_path, encoding="utf-8", errors="replace").read()
+    tree = ET.ElementTree(ET.fromstring(sanitize_xml(raw)))
     root = tree.getroot()
     
     profile = {}
@@ -70,14 +72,23 @@ def load_profile_from_xml(xml_path: str = None) -> dict:
         profile["experience_highlight"] = False
 
     # -- Personal Information ------------------------------------
+    def _clean(val: str) -> str:
+        """Strip [PLACEHOLDER] and similar sentinel values — treat as empty."""
+        v = (val or "").strip()
+        if v.upper() in ("[PLACEHOLDER]", "PLACEHOLDER", "N/A", "NONE", "NULL", "TBD"):
+            return ""
+        if v.startswith("[") and v.endswith("]"):
+            return ""
+        return v
+
     personal = root.find("personal")
     if personal is not None:
-        profile["name"]     = personal.findtext("name", "").strip()
-        profile["email"]    = personal.findtext("email", "").strip()
-        profile["phone"]    = personal.findtext("phone", "").strip()
-        profile["location"] = personal.findtext("location", "").strip()
-        profile["linkedin"] = personal.findtext("linkedin", "").strip()
-        profile["github"]   = personal.findtext("github", "").strip()
+        profile["name"]     = _clean(personal.findtext("name", ""))
+        profile["email"]    = _clean(personal.findtext("email", ""))
+        profile["phone"]    = _clean(personal.findtext("phone", ""))
+        profile["location"] = _clean(personal.findtext("location", ""))
+        profile["linkedin"] = _clean(personal.findtext("linkedin", ""))
+        profile["github"]   = _clean(personal.findtext("github", ""))
     
     # -- Summary -------------------------------------------------
     profile["summary"] = root.findtext("summary", "").strip()
@@ -130,11 +141,13 @@ def load_profile_from_xml(xml_path: str = None) -> dict:
     if education_section is not None:
         for degree in education_section.findall("degree"):
             degree_data = {
-                "degree": degree.findtext("name", "").strip(),
-                "school": degree.findtext("school", "").strip(),
-                "year":   degree.findtext("year", "").strip(),
+                "degree": _clean(degree.findtext("name", "")),
+                "school": _clean(degree.findtext("school", "")),
+                "year":   _clean(degree.findtext("year", "")),
             }
-            profile["education"].append(degree_data)
+            # Skip entirely empty education entries
+            if any(degree_data.values()):
+                profile["education"].append(degree_data)
     
     # -- Projects ------------------------------------------------
     profile["projects"] = []
@@ -148,12 +161,14 @@ def load_profile_from_xml(xml_path: str = None) -> dict:
                     b.text.strip() for b in proj_bullets_sec.findall("bullet") if b.text
                 ]
             project_data = {
-                "name":        project.findtext("name", "").strip(),
-                "tech":        project.findtext("tech", "").strip(),
-                "description": project.findtext("description", "").strip(),
+                "name":        _clean(project.findtext("name", "")),
+                "tech":        _clean(project.findtext("tech", "")),
+                "description": _clean(project.findtext("description", "")),
                 "bullets":     proj_bullets,
             }
-            profile["projects"].append(project_data)
+            # Only include projects that have at least a name
+            if project_data["name"]:
+                profile["projects"].append(project_data)
     
     # -- Volunteer -----------------------------------------------
     profile["volunteer"] = []

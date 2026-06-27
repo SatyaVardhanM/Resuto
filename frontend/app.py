@@ -181,7 +181,7 @@ from frontend.views.history_view   import HistoryMixin
 from frontend.views.stats_view     import StatsMixin
 from frontend.views.settings_view  import SettingsMixin
 from frontend.views.dialogs        import IntakeWindow, ProfileViewWindow, ReviewWindow
-from frontend.views.auth_view      import RegistrationWindow
+from frontend.views.auth_view      import run_access_gate
 
 # ── Main application ───────────────────────────────────────────────
 class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
@@ -196,42 +196,20 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
         self._api_var       = ctk.StringVar(value=_load_api_key())
         self._api_save_pref = ctk.BooleanVar(value=bool(_load_api_key()))
 
-        # First-time registration gate — STRICT: any failure blocks the app
-        _license_ok = False
-        try:
-            from core.license import is_approved
-            try:
-                _license_ok = is_approved()
-            except Exception:
-                # is_approved() failed (e.g. no internet, sheet error)
-                # Treat as not approved — show registration
-                _license_ok = False
+        # ── Access gate (IP-based registration / login) ─────────────
+        self._access_granted = False
+        self._gate_done      = tk.BooleanVar(value=False)
 
-        except ImportError as _ie:
-            import tkinter as _tk
-            _r = _tk.Tk(); _r.withdraw()
-            _tk.messagebox.showerror(
-                "Missing dependency",
-                f"License module failed to load:\n{_ie}\n\n"
-                f"Run: pip install cryptography gspread")
-            _r.destroy()
+        def _on_access_granted():
+            self._access_granted = True
+            self._gate_done.set(True)
+
+        run_access_gate(self, _on_access_granted)
+        self.wait_variable(self._gate_done)
+
+        if not self._access_granted:
             self.destroy()
             return
-
-        except Exception as _ex:
-            import tkinter as _tk
-            _r = _tk.Tk(); _r.withdraw()
-            _tk.messagebox.showerror("License Error",
-                f"Unexpected error in license check:\n{_ex}")
-            _r.destroy()
-            self.destroy()
-            return
-
-        if not _license_ok:
-            _ok = RegistrationWindow.run_gate(self)
-            if not _ok:
-                self.destroy()
-                return
 
         self.title(APP_TITLE)
         self.geometry("920x640")

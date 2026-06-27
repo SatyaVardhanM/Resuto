@@ -1,20 +1,23 @@
 """
 frontend/views/auth_view.py
 ───────────────────────────
-RegistrationWindow — license gate shown on first launch.
-Handles machine-ID registration, approval polling,
-and API key entry before the main App window appears.
+Access gate — always shows Login / Register choice on startup.
+
+Register → Full Name + Email + API Key
+Login    → Email + API Key
+           - Match         → update machine info → open app
+           - Key changed   → show Update Key button
+           - Not found     → prompt to register
 """
+
+import os
+import re
+import queue
+import threading
 import tkinter as tk
 from tkinter import messagebox
-import os
-import sys
-import threading
 
 import customtkinter as ctk
-import queue
-import re
-import time
 
 from frontend.constants import (
     BG, BG_CARD, BG_FIELD, BG_HOVER,
@@ -23,395 +26,461 @@ from frontend.constants import (
 )
 
 
-class RegistrationWindow(ctk.CTkToplevel):
+# ── Shared widget helpers ─────────────────────────────────────────
+def _entry(parent, placeholder="", show=""):
+    return ctk.CTkEntry(
+        parent, placeholder_text=placeholder,
+        fg_color=BG_FIELD, border_color=ACCENT,
+        text_color=FG, placeholder_text_color=MUTED,
+        font=F("small"), show=show,
+        corner_radius=8, height=38,
+    )
+
+
+def _btn(parent, text, command, color=None, hover=None, **kw):
+    return ctk.CTkButton(
+        parent, text=text, command=command,
+        fg_color=color or ACCENT, hover_color=hover or ACCENT_HV,
+        font=F("small"), corner_radius=10, height=40, **kw
+    )
+
+
+def _label(parent, text, size="small", color=None, **kw):
+    return ctk.CTkLabel(
+        parent, text=text,
+        font=F(size), text_color=color or FG, **kw
+    )
+
+
+def _divider(parent):
+    ctk.CTkFrame(parent, height=1, fg_color=BG_HOVER).pack(
+        fill="x", padx=24, pady=8)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  AccessWindow — single window with Login / Register tabs
+# ══════════════════════════════════════════════════════════════════
+class AccessWindow(ctk.CTkToplevel):
     """
-    First-time registration gate.
-    Fully scrollable, reactive layout.
-    All fields validated before submission.
-    Thread-safe via queue.
+    Shows two buttons: Login / Register.
+    Switching shows the relevant form inline — no separate windows.
     """
 
-    # Phone regex: accepts +1 (555) 000-0000, +15550000000, 555-000-0000 etc.
-    _PHONE_RE = re.compile(
-        r"^\+?1?\s*[\-.]?\(?\d{3}\)?[\s\-.]?\d{3}[\s\-.]?\d{4}$")
-    _EMAIL_RE = re.compile(
-        r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+    def __init__(self, master, on_success):
+        super().__init__(master)
+        self._on_success = on_success
+        self._q: queue.Queue = queue.Queue()
+        self._mode = None           # "login" | "register" | "update_key"
 
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.title("Access Request")
-        self.geometry("520x620")
-        self.minsize(400, 500)
-        self.resizable(True, True)
+        self.title("Resuto — Access")
+        self.geometry("460x560")
+        self.resizable(False, False)
+        self.configure(fg_color=BG)
         self.grab_set()
-        self.approved = False
-        self._q       = queue.Queue()
+        self.lift()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
         self._build()
-        self._poll()
+        self.after(50, self._poll)
 
-    @staticmethod
-    def run_gate(parent) -> bool:
-        """
-        Show registration window and block until done.
-        Returns True ONLY if explicitly approved — False on any error or close.
-        """
+    # ── Main layout ───────────────────────────────────────────────
+    def _build(self):
+        # ── Header
+        hdr = ctk.CTkFrame(self, fg_color="transparent")
+        hdr.pack(fill="x", padx=30, pady=(28, 0))
+        _label(hdr, "Resuto", "title").pack()
+        _label(hdr, "AI-powered resume tailoring", "small", MUTED).pack(pady=(2, 0))
+
+        # ── Choice buttons
+        choice = ctk.CTkFrame(self, fg_color="transparent")
+        choice.pack(fill="x", padx=30, pady=20)
+        choice.columnconfigure(0, weight=1)
+        choice.columnconfigure(1, weight=1)
+
+        self._login_tab_btn = ctk.CTkButton(
+            choice, text="Login",
+            command=self._show_login,
+            fg_color=ACCENT, hover_color=ACCENT_HV,
+            font=F("small"), corner_radius=10, height=40,
+        )
+        self._login_tab_btn.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+
+        self._reg_tab_btn = ctk.CTkButton(
+            choice, text="Register",
+            command=self._show_register,
+            fg_color=BG_CARD, hover_color=BG_HOVER,
+            font=F("small"), corner_radius=10, height=40,
+        )
+        self._reg_tab_btn.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+
+        # ── Card area — forms swap in here
+        self._card = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=16)
+        self._card.pack(fill="both", expand=True, padx=30, pady=(0, 24))
+
+        # ── Status label (shared)
+        self._status = _label(self._card, "", "small", MUTED)
+
+        # Build both forms (hidden initially)
+        self._build_login_form()
+        self._build_register_form()
+        self._build_update_key_form()
+
+        # Default view
+        self._show_login()
+
+    # ── Login form ────────────────────────────────────────────────
+    def _build_login_form(self):
+        self._login_frame = ctk.CTkFrame(self._card, fg_color="transparent")
+
+        _label(self._login_frame, "Welcome back", "body").pack(pady=(20, 4))
+        _label(self._login_frame, "Sign in with your email and API key",
+               "small", MUTED).pack(pady=(0, 16))
+
+        self._l_email = _entry(self._login_frame, "Email Address")
+        self._l_email.pack(fill="x", padx=20, pady=5)
+
+        self._l_key = _entry(self._login_frame, "Anthropic API Key (sk-ant-...)", show="•")
+        self._l_key.pack(fill="x", padx=20, pady=5)
+
+        self._login_btn = _btn(self._login_frame, "Login", self._do_login)
+        self._login_btn.pack(fill="x", padx=20, pady=(10, 6))
+
+        _label(self._login_frame,
+               "New to Resuto? Click Register above.",
+               "tiny", MUTED).pack(pady=(4, 16))
+
+    # ── Register form ─────────────────────────────────────────────
+    def _build_register_form(self):
+        self._register_frame = ctk.CTkFrame(self._card, fg_color="transparent")
+
+        _label(self._register_frame, "Create your account", "body").pack(pady=(20, 4))
+        _label(self._register_frame,
+               "Enter your details to get started",
+               "small", MUTED).pack(pady=(0, 16))
+
+        self._r_name  = _entry(self._register_frame, "Full Name")
+        self._r_name.pack(fill="x", padx=20, pady=5)
+
+        self._r_email = _entry(self._register_frame, "Email Address")
+        self._r_email.pack(fill="x", padx=20, pady=5)
+
+        self._r_key   = _entry(self._register_frame,
+                               "Anthropic API Key (sk-ant-...)", show="•")
+        self._r_key.pack(fill="x", padx=20, pady=5)
+
+        self._reg_btn = _btn(self._register_frame, "Create Account", self._do_register)
+        self._reg_btn.pack(fill="x", padx=20, pady=(10, 6))
+
+        _label(self._register_frame,
+               "Already registered? Click Login above.",
+               "tiny", MUTED).pack(pady=(4, 16))
+
+    # ── Update API key form ───────────────────────────────────────
+    def _build_update_key_form(self):
+        self._update_frame = ctk.CTkFrame(self._card, fg_color="transparent")
+
+        _label(self._update_frame, "Update API Key", "body").pack(pady=(20, 4))
+        _label(self._update_frame,
+               "Your API key has changed. Enter your email\n"
+               "and new API key to update your account.",
+               "small", MUTED, justify="center").pack(pady=(0, 16))
+
+        self._u_email = _entry(self._update_frame, "Email Address")
+        self._u_email.pack(fill="x", padx=20, pady=5)
+
+        self._u_key = _entry(self._update_frame,
+                             "New Anthropic API Key (sk-ant-...)", show="•")
+        self._u_key.pack(fill="x", padx=20, pady=5)
+
+        btn_row = ctk.CTkFrame(self._update_frame, fg_color="transparent")
+        btn_row.pack(fill="x", padx=20, pady=(10, 6))
+        btn_row.columnconfigure(0, weight=1)
+        btn_row.columnconfigure(1, weight=1)
+
+        self._back_btn = _btn(btn_row, "← Back", self._show_login,
+             color=BG_HOVER, hover=BG_FIELD)
+        self._back_btn.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+
+        self._update_btn = _btn(btn_row, "Update Key", self._do_update_key,
+             color=WARNING, hover="#C47000")
+        self._update_btn.grid(row=0, column=1, sticky="ew", padx=(4, 0))
+
+    # ── Show / hide form panels ───────────────────────────────────
+    def _show_login(self):
+        self._mode = "login"
+        self._register_frame.pack_forget()
+        self._update_frame.pack_forget()
+        self._status.pack_forget()
+        self._login_frame.pack(fill="both", expand=True)
+        self._status.pack(pady=(0, 8))
+        self._set_status("")
+        self._login_tab_btn.configure(fg_color=ACCENT)
+        self._reg_tab_btn.configure(fg_color=BG_CARD)
+
+    def _show_register(self):
+        self._mode = "register"
+        self._login_frame.pack_forget()
+        self._update_frame.pack_forget()
+        self._status.pack_forget()
+        self._register_frame.pack(fill="both", expand=True)
+        self._status.pack(pady=(0, 8))
+        self._set_status("")
+        self._reg_tab_btn.configure(fg_color=ACCENT)
+        self._login_tab_btn.configure(fg_color=BG_CARD)
+
+    def _show_update_key(self, prefill_email=""):
+        self._mode = "update_key"
+        self._login_frame.pack_forget()
+        self._register_frame.pack_forget()
+        self._status.pack_forget()
+        self._update_frame.pack(fill="both", expand=True)
+        self._status.pack(pady=(0, 8))
+        if prefill_email:
+            self._u_email.delete(0, "end")
+            self._u_email.insert(0, prefill_email)
+        self._set_status("")
+
+    # ── Action: Login ─────────────────────────────────────────────
+    def _do_login(self):
+        email   = self._l_email.get().strip()
+        api_key = self._l_key.get().strip()
+
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            self._set_status("Enter a valid email address.", DANGER); return
+        if not api_key:
+            self._set_status("Enter your API key.", DANGER); return
+
+        self._set_status("Verifying credentials...", MUTED)
+        self._set_buttons_state("disabled")
+        threading.Thread(
+            target=self._bg_login, args=(email, api_key), daemon=True
+        ).start()
+
+    def _bg_login(self, email, api_key):
         try:
-            win = RegistrationWindow(parent)
-            parent.wait_window(win)
-            return win.approved is True   # strict check — must be exactly True
-        except Exception:
-            return False   # any error → deny access, never bypass
+            from core.license import login_user
+            result = login_user(email, api_key)
+            self._q.put(("login", result, email, api_key))
+        except Exception as e:
+            self._q.put(("error", str(e)[:100], "", ""))
 
-    # ── Queue poll — main thread only ────────────────────────────
+    # ── Action: Register ──────────────────────────────────────────
+    def _do_register(self):
+        name    = self._r_name.get().strip()
+        email   = self._r_email.get().strip()
+        api_key = self._r_key.get().strip()
+
+        if not name:
+            self._set_status("Enter your full name.", DANGER); return
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            self._set_status("Enter a valid email address.", DANGER); return
+        if not api_key.startswith("sk-ant-"):
+            self._set_status("API key must start with sk-ant-", DANGER); return
+
+        self._set_status("Validating API key...", MUTED)
+        self._set_buttons_state("disabled")
+        threading.Thread(
+            target=self._bg_register, args=(name, email, api_key), daemon=True
+        ).start()
+
+    def _bg_register(self, name, email, api_key):
+        try:
+            from core.license import register_user, poll_approval
+            result = register_user(name, email, api_key)
+            if result != "ok":
+                self._q.put(("register", result, email, api_key))
+                return
+            # Tell main thread to show waiting UI
+            self._q.put(("show_waiting", "", "", ""))
+            # Poll until admin approves/rejects
+            approval = poll_approval(email, timeout=600, interval=5)
+            self._q.put(("approval", approval, email, api_key))
+        except Exception as e:
+            self._q.put(("error", str(e)[:100], "", ""))
+
+    def _do_update_key(self):
+        email   = self._u_email.get().strip()
+        api_key = self._u_key.get().strip()
+
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            self._set_status("Enter a valid email address.", DANGER); return
+        if not api_key.startswith("sk-ant-"):
+            self._set_status("API key must start with sk-ant-", DANGER); return
+
+        self._set_status("Validating new API key...", MUTED)
+        self._set_buttons_state("disabled")
+        threading.Thread(
+            target=self._bg_update_key, args=(email, api_key), daemon=True
+        ).start()
+
+    def _bg_update_key(self, email, api_key):
+        try:
+            from core.license import update_api_key
+            result = update_api_key(email, api_key)
+            self._q.put(("update_key", result, email, api_key))
+        except Exception as e:
+            self._q.put(("error", str(e)[:100], "", ""))
+
+    # ── Poll result queue (main thread) ──────────────────────────
     def _poll(self):
         try:
-            while True:
-                kind, data = self._q.get_nowait()
-                if kind == "status":
-                    self._status_lbl.configure(text=data, text_color=FG_DIM)
-                elif kind == "error":
-                    self._status_lbl.configure(text=data, text_color=DANGER)
-                    self._submit_btn.configure(state="normal")
-                elif kind == "timer":
-                    self._timer_lbl.configure(text=data)
-                elif kind == "approved":
-                    self._on_approved()
-                elif kind == "denied":
-                    self._on_denied()
-                elif kind == "timeout":
-                    self._on_timeout()
-        except Exception:
-            pass
-        if self.winfo_exists():
-            self.after(50, self._poll)
+            msg = self._q.get_nowait()
+            kind, result, email, api_key = msg
 
-    # ── UI build ──────────────────────────────────────────────────
-    def _build(self):
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(0, weight=1)
+            self._set_buttons_state("normal")
+            self.update_idletasks()   # force UI refresh before showing status
 
-        # Outer scrollable container so nothing gets clipped
-        scroll = ctk.CTkScrollableFrame(self, fg_color=BG, corner_radius=0)
-        scroll.grid(row=0, column=0, sticky="nsew")
-        scroll.grid_columnconfigure(0, weight=1)
+            if kind == "show_waiting":
+                self._set_buttons_state("disabled")
+                self.update_idletasks()
+                self._dot_count = 0
+                self._animate_dots()
 
-        # Card inside scroll
-        card = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=14)
-        card.pack(fill="x", padx=20, pady=20)
-        card.grid_columnconfigure(0, weight=1)
-
-        # ── Header ────────────────────────────────────────────────
-        ctk.CTkLabel(card, text="⚡",
-                     font=(_FONT_FAMILY, 40)).pack(pady=(28, 4))
-        ctk.CTkLabel(card, text="Resuto",
-                     font=F("heading"), text_color=FG).pack()
-        ctk.CTkLabel(card,
-                     text="Fill in your details to request access. The admin will approve or deny within 5 minutes.",
-                     justify="center", wraplength=440).pack(pady=(6, 22))
-
-        # ── Field builder helper ───────────────────────────────────
-        def field(label_text, placeholder, optional=False):
-            row = ctk.CTkFrame(card, fg_color="transparent")
-            row.pack(fill="x", padx=24, pady=(0, 12))
-            row.grid_columnconfigure(0, weight=1)
-            lbl_txt = label_text + ("  (optional)" if optional else "  *")
-            ctk.CTkLabel(row, text=lbl_txt, font=F("small"),
-                         text_color=FG_DIM if optional else FG,
-                         anchor="w").grid(row=0, column=0, sticky="w")
-            var = ctk.StringVar()
-            entry = ctk.CTkEntry(row, textvariable=var,
-                                 placeholder_text=placeholder,
-                                 height=38, font=F("body"))
-            entry.grid(row=1, column=0, sticky="ew", pady=(3, 0))
-            err = ctk.CTkLabel(row, text="", font=F("tiny"),
-                               text_color=DANGER, anchor="w")
-            err.grid(row=2, column=0, sticky="w")
-            return var, entry, err
-
-        self._first_var,  self._first_e,  self._first_err  = field("First Name",   "e.g. John")
-        self._middle_var, self._middle_e, self._middle_err = field("Middle Name",  "e.g. Michael", optional=True)
-        self._last_var,   self._last_e,   self._last_err   = field("Last Name",    "e.g. Doe")
-        self._email_var,  self._email_e,  self._email_err  = field("Email Address","you@example.com")
-        self._phone_var,  self._phone_e,  self._phone_err  = field("Phone Number", "+1 (555) 000-0000")
-
-        # ── Error summary ─────────────────────────────────────────
-        self._err_lbl = ctk.CTkLabel(card, text="", font=F("small"),
-                                      text_color=DANGER, wraplength=440,
-                                      justify="center")
-        self._err_lbl.pack(pady=(4, 0))
-
-        # ── Submit button ─────────────────────────────────────────
-        self._submit_btn = ctk.CTkButton(
-            card, text="Request Access  →",
-            height=44, font=F("body_b"),
-            corner_radius=10, fg_color=ACCENT, hover_color=ACCENT_HV,
-            command=self._submit)
-        self._submit_btn.pack(fill="x", padx=24, pady=(14, 0))
-
-        # ── Status + timer ────────────────────────────────────────
-        self._status_lbl = ctk.CTkLabel(
-            card, text="", font=F("small"),
-            text_color=FG_DIM, wraplength=440, justify="center")
-        self._status_lbl.pack(pady=(12, 0))
-
-        self._timer_lbl = ctk.CTkLabel(
-            card, text="", font=F("tiny"), text_color=MUTED)
-        self._timer_lbl.pack(pady=(4, 28))
-
-        # Bind Enter key to submit
-        self.bind("<Return>", lambda e: self._submit())
-
-    # ── Validation ────────────────────────────────────────────────
-    def _validate(self) -> bool:
-        ok = True
-
-        # First name
-        first = self._first_var.get().strip()
-        if not first:
-            self._first_err.configure(text="First name is required.")
-            ok = False
-        elif len(first) < 2:
-            self._first_err.configure(text="Must be at least 2 characters.")
-            ok = False
-        else:
-            self._first_err.configure(text="")
-
-        # Middle name (optional — only validate if filled)
-        middle = self._middle_var.get().strip()
-        if middle and len(middle) < 2:
-            self._middle_err.configure(text="Must be at least 2 characters.")
-            ok = False
-        else:
-            self._middle_err.configure(text="")
-
-        # Last name
-        last = self._last_var.get().strip()
-        if not last:
-            self._last_err.configure(text="Last name is required.")
-            ok = False
-        elif len(last) < 2:
-            self._last_err.configure(text="Must be at least 2 characters.")
-            ok = False
-        else:
-            self._last_err.configure(text="")
-
-        # Email
-        email = self._email_var.get().strip()
-        if not email:
-            self._email_err.configure(text="Email address is required.")
-            ok = False
-        elif not self._EMAIL_RE.match(email):
-            self._email_err.configure(text="Enter a valid email address.")
-            ok = False
-        else:
-            self._email_err.configure(text="")
-
-        # Phone
-        phone = self._phone_var.get().strip()
-        if not phone:
-            self._phone_err.configure(text="Phone number is required.")
-            ok = False
-        elif not self._PHONE_RE.match(re.sub(r"\s+", " ", phone)):
-            self._phone_err.configure(
-                text="Enter a valid US phone number e.g. +1 (555) 000-0000")
-            ok = False
-        else:
-            self._phone_err.configure(text="")
-
-        return ok
-
-    # ── Submit ────────────────────────────────────────────────────
-    def _submit(self):
-        self._err_lbl.configure(text="")
-        if not self._validate():
-            return
-
-        first  = self._first_var.get().strip()
-        middle = self._middle_var.get().strip()
-        last   = self._last_var.get().strip()
-        email  = self._email_var.get().strip()
-        phone  = self._phone_var.get().strip()
-        name   = " ".join(filter(None, [first, middle, last]))
-
-        self._submit_btn.configure(state="disabled")
-        self._status_lbl.configure(text="Sending request to admin...")
-        threading.Thread(
-            target=self._do_registration,
-            args=(name, email, phone),
-            daemon=True).start()
-
-    def _do_registration(self, name: str, email: str, phone: str):
-        """Background thread — only touches self._q, never widgets directly."""
-        try:
-            from core.license import (
-                _machine_id, send_approval_request,
-                poll_for_decision, store_decision, notify_admin_expired,
-                _fetch_from_sheet)
-            mid = _machine_id()
-
-            # Pre-check: does this machine already have an entry in the sheet?
-            existing = _fetch_from_sheet(mid)
-            if existing:
-                status = existing.get("status", "").lower()
-                if status == "approved":
-                    # Already approved — just re-store the decision locally
-                    self._q.put(("status", "Machine already approved. Restoring access..."))
-                    store_decision(
-                        existing.get("name", name),
-                        existing.get("phone", phone),
-                        mid,
-                        "approved",
-                        email=existing.get("email", email)
-                    )
-                    self._q.put(("approved", None))
-                    return
-                elif status == "pending":
-                    self._q.put(("error",
-                        "Your access request is still pending approval.\n\n"
-                        "Please wait for the admin to approve your previous request.\n"
-                        "Do not submit again."))
-                    return
-                elif status == "revoked":
-                    self._q.put(("denied", None))
-                    return
-
-            msg_id = send_approval_request(name, phone, mid, email=email)
-            if not msg_id:
-                self._q.put(("error",
-                    "Could not send access request.\n\n"
-                    "Please check your internet connection and try again.\n"
-                    "If the problem persists, contact the developer."))
-                return
-
-            self._q.put(("status",
-                "Request sent! Waiting for admin approval. You have 5 minutes."))
-
-            def _prog(remaining):
-                m, s = divmod(remaining, 60)
-                self._q.put(("timer", "Time remaining: %d:%02d" % (m, s)))
-
-            decision = poll_for_decision(mid, progress_cb=_prog)
-            store_decision(name, phone, mid, decision, email=email)
-            if decision == "timeout":
-                notify_admin_expired(mid)
-            self._q.put((decision if decision in ("approved", "denied")
-                         else "timeout", None))
-
-        except Exception as e:
-            self._q.put(("error", "Error: " + str(e)))
-
-    # ── Outcome handlers ──────────────────────────────────────────
-    def _check_for_updates_after_launch(self):
-        """Check for updates in background after app is running."""
-        try:
-            from core.updater import check_in_background
-            def _on_found(info):
-                self.after(0, lambda: self._show_update_dialog(info))
-            check_in_background(_on_found)
-        except Exception:
-            pass
-
-    def _show_update_dialog(self, info: dict):
-        """Show update available dialog."""
-        version  = info.get("version", "?")
-        notes    = info.get("release_notes", "")
-        dl_url   = info.get("download_url", "")
-
-        popup = ctk.CTkToplevel(self)
-        popup.title("Update Available")
-        popup.geometry("460x300")
-        popup.resizable(False, False)
-        popup.grab_set()
-
-        ctk.CTkLabel(popup,
-            text="v%s is available" % version,
-            font=ctk.CTkFont(size=16, weight="bold"),
-            text_color=ACCENT).pack(pady=(20,6))
-
-        ctk.CTkLabel(popup,
-            text="You have v%s installed." % self._get_current_version(),
-            font=ctk.CTkFont(size=12),
-            text_color=FG_DIM).pack()
-
-        if notes:
-            tb = ctk.CTkTextbox(popup, height=80, font=ctk.CTkFont(size=11))
-            tb.pack(fill="x", padx=20, pady=10)
-            tb.insert("1.0", notes)
-            tb.configure(state="disabled")
-
-        prog_lbl = ctk.CTkLabel(popup, text="", font=ctk.CTkFont(size=11),
-                                  text_color=FG_DIM)
-        prog_lbl.pack()
-
-        prog = ctk.CTkProgressBar(popup, width=400)
-        prog.set(0)
-
-        btn_row = ctk.CTkFrame(popup, fg_color="transparent")
-        btn_row.pack(fill="x", padx=20, pady=(10,16))
-
-        ctk.CTkButton(btn_row, text="Later", width=100,
-            fg_color=BG_FIELD, hover_color=BG_HOVER,
-            command=popup.destroy).pack(side="left")
-
-        def _do_update():
-            update_btn.configure(state="disabled", text="Downloading...")
-            prog.pack(pady=(0,8))
-            prog_lbl.pack()
-
-            def _progress(pct):
-                self.after(0, lambda: prog.set(pct/100))
-                self.after(0, lambda: prog_lbl.configure(
-                    text="Downloading... %d%%" % pct))
-
-            def _worker():
-                from core.updater import download_and_install
-                ok = download_and_install(dl_url, version, _progress)
-                if ok:
-                    self.after(0, lambda: (
-                        prog_lbl.configure(text="Installing... app will restart."),
-                        self.after(2000, self.quit)))
+            elif kind == "approval":
+                self._stop_dots()
+                if result == "approved":
+                    self._grant(api_key)
+                elif result == "rejected":
+                    self._set_buttons_state("normal")
+                    self._set_status("Registration rejected. Contact support.", DANGER)
+                elif result == "timeout":
+                    self._set_buttons_state("normal")
+                    self._set_status("Approval timed out. Try again.", DANGER)
                 else:
-                    self.after(0, lambda: prog_lbl.configure(
-                        text="Download failed. Try again later.",
-                        text_color=DANGER))
-                    self.after(0, lambda: update_btn.configure(
-                        state="normal", text="Update Now"))
+                    self._set_buttons_state("normal")
+                    self._set_status("Could not check approval. Check connection.", DANGER)
 
-            import threading
-            threading.Thread(target=_worker, daemon=True).start()
+            elif kind == "login":
 
-        update_btn = ctk.CTkButton(btn_row, text="Update Now",
-            width=140, fg_color=ACCENT, hover_color=ACCENT_HV,
-            command=_do_update)
-        update_btn.pack(side="right")
+                if result == "ok":
+                    self._grant(api_key)
+                elif result == "key_changed":
+                    self._set_status(
+                        "Your API key has changed.\n"
+                        "Click 'Update API Key' to update it.", WARNING)
+                    # Switch to update key form pre-filled with email
+                    self.after(1200, lambda: self._show_update_key(email))
+                elif result == "not_registered":
+                    self._set_status(
+                        "No account found for this email.\n"
+                        "Please register first.", DANGER)
+                elif result == "creds_error":
+                    self._set_status(
+                        "Server credentials error.\n"
+                        "Please contact support.", DANGER)
+                elif result == "network_error":
+                    self._set_status(
+                        "Connection timed out.\n"
+                        "Check your internet and try again.", DANGER)
+                else:
+                    self._set_status(
+                        "Email or API key is incorrect.", DANGER)
 
-    def _get_current_version(self) -> str:
-        try:
-            from core.config import APP_VERSION
-            return APP_VERSION
-        except Exception:
-            return "?"
+            elif kind == "register":
+                if result == "ok":
+                    self._grant(api_key)
+                elif result == "already_exists":
+                    self._set_status(
+                        "This email is already registered.\n"
+                        "Please use Login instead.", WARNING)
+                elif result == "invalid_key":
+                    self._set_status(
+                        "API key is invalid. Please check and try again.", DANGER)
+                elif result == "creds_error":
+                    self._set_status(
+                        "Server credentials error.\n"
+                        "Please contact support or try again later.", DANGER)
+                elif result == "network_error":
+                    self._set_status(
+                        "Connection timed out.\n"
+                        "Check your internet and try again.", DANGER)
+                elif result == "quota_error":
+                    self._set_status(
+                        "Server busy. Please try again in a moment.", WARNING)
+                else:
+                    self._set_status(
+                        "Something went wrong.\n"
+                        "Check your internet connection.", DANGER)
 
-    def _on_approved(self):
-        self._status_lbl.configure(
-            text="✅ Access approved! Starting the app...",
-            text_color=SUCCESS)
-        self._timer_lbl.configure(text="")
-        self.approved = True
-        self.after(1200, self.destroy)
+            elif kind == "update_key":
+                if result == "ok":
+                    self._grant(api_key)
+                elif result == "invalid_key":
+                    self._set_status(
+                        "New API key is invalid. Please check and try again.", DANGER)
+                elif result == "not_registered":
+                    self._set_status(
+                        "No account found for this email.", DANGER)
+                elif result == "creds_error":
+                    self._set_status(
+                        "Server credentials error.\n"
+                        "Please contact support.", DANGER)
+                elif result == "network_error":
+                    self._set_status(
+                        "Connection timed out.\n"
+                        "Check your internet and try again.", DANGER)
+                else:
+                    self._set_status(
+                        "Could not update. Check your connection.", DANGER)
 
-    def _on_denied(self):
-        self._status_lbl.configure(
-            text="❌ Access denied. Contact the administrator "
-                 "if you believe this is a mistake.",
-            text_color=DANGER)
-        self._timer_lbl.configure(text="")
-        self.after(4000, self.destroy)
+            elif kind == "error":
+                self._set_status(
+                    f"Error: {result}", DANGER)
+                self._set_buttons_state("normal")
 
-    def _on_timeout(self):
-        self._status_lbl.configure(
-            text="⏰ No response from admin within 5 minutes. "
-                 "Please try again later.",
-            text_color=WARNING)
-        self._timer_lbl.configure(text="")
-        self._submit_btn.configure(state="normal", text="Try Again")
+        except queue.Empty:
+            pass
+        self.after(50, self._poll)
+
+    # ── Grant access ──────────────────────────────────────────────
+    def _grant(self, api_key: str):
+        os.environ["ANTHROPIC_API_KEY"] = api_key
+        self.after(0, lambda: self._set_status("Access granted!", SUCCESS))
+        self.after(700, lambda: (self.destroy(), self._on_success()))
+
+    # ── Helpers ───────────────────────────────────────────────────
+    def _set_status(self, msg, color=None):
+        self._status.configure(text=msg, text_color=color or MUTED)
+
+    def _set_buttons_state(self, state):
+        """Enable/disable only the action buttons — never touches status label."""
+        for btn in [
+            getattr(self, '_login_btn',  None),
+            getattr(self, '_reg_btn',    None),
+            getattr(self, '_update_btn', None),
+            getattr(self, '_back_btn',   None),
+        ]:
+            if btn is not None:
+                try:
+                    btn.configure(state=state)
+                except Exception:
+                    pass
+
+    def _show_waiting(self):
+        """No longer called directly — handled via queue in _poll."""
+        pass
+
+    def _animate_dots(self):
+        if not self.winfo_exists():
+            return
+        dots = "." * (self._dot_count % 4)
+        msg = "Waiting for admin approval" + dots + " Check Telegram to approve."
+        self._set_status(msg, WARNING)
+        self._dot_count += 1
+        self._dot_timer = self.after(600, self._animate_dots)
+
+    def _stop_dots(self):
+        if hasattr(self, "_dot_timer"):
+            try:
+                self.after_cancel(self._dot_timer)
+            except Exception:
+                pass
+
+    def _on_close(self):
+        self.master.destroy()
+
+
+
+# ── Entry point called from app.py ───────────────────────────────
+def run_access_gate(master, on_success):
+    AccessWindow(master, on_success)
