@@ -1168,6 +1168,9 @@ if __name__ == "__main__":
     parser.add_argument("--job-types",     nargs="*", default=[])
     parser.add_argument("--workplace",     nargs="*", default=[])
     parser.add_argument("--date-posted",   default="any")
+    parser.add_argument("--application-mode", default="continuous",
+                        choices=["continuous", "one_at_a_time"],
+                        help="continuous=auto apply; one_at_a_time=pause per job")
     parser.add_argument("--phase2-only",  action="store_true",
                         help="Skip Phase 1, run Phase 2 only")
     parser.add_argument("--job-ids",      nargs="+", type=int, default=[],

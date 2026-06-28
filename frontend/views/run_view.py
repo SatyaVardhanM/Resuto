@@ -867,7 +867,7 @@ class RunMixin:
         args += ["--roles"] + selected
 
         # Clear leftover action bar from previous run
-        self._hide_action_bar()
+        self._hide_action_panel()
         # Drain any stale queue messages from previous run
         try:
             while True: self._q.get_nowait()
@@ -890,7 +890,7 @@ class RunMixin:
         # session_start stays set — Recent keeps showing this session's jobs
         self._live_dot.configure(text_color=MUTED)
         self._stop_btn.pack_forget()
-        self._hide_action_bar()
+        self._hide_action_panel()
         self._act_strip.grid_forget()
         self._act_strip_visible = False
         self._set_phase("Stopped")
@@ -937,6 +937,58 @@ class RunMixin:
 
         # Show in action panel (runs on main thread via after())
         self.after(0, lambda: self._show_action_panel(title, company, url, score))
+
+    def _show_action_bar(self, mode: str):
+        """
+        Legacy action bar for D/S/Q prompts during apply phase.
+        mode: "dsq" | "nf" | "yn_apply"
+        """
+        self._hide_action_panel()
+        panel = ctk.CTkFrame(self._run_frame, fg_color=BG_CARD,
+                              corner_radius=10, border_width=1,
+                              border_color=WARNING)
+        panel.pack(fill="x", padx=16, pady=(0,8), before=self._run_log)
+        self._action_panel = panel
+
+        if mode == "dsq":
+            ctk.CTkLabel(panel, text="Bot is waiting for your decision:",
+                         font=ctk.CTkFont(size=11), text_color=FG_DIM
+                         ).pack(anchor="w", padx=12, pady=(10,4))
+            row = ctk.CTkFrame(panel, fg_color="transparent")
+            row.pack(fill="x", padx=12, pady=(0,10))
+            for label, cmd in [("✓ Applied","APPLIED"),("✗ Skip","SKIP"),("⏹ Quit","QUIT")]:
+                ctk.CTkButton(row, text=label, width=110,
+                              fg_color=SUCCESS if "Applied" in label else BG_FIELD,
+                              hover_color="#1a9e4a" if "Applied" in label else BG_HOVER,
+                              font=ctk.CTkFont(size=11),
+                              command=lambda c=cmd: self._send_bot_action(c)
+                              ).pack(side="left", padx=(0,6))
+        elif mode == "nf":
+            ctk.CTkLabel(panel,
+                         text="Not found on LinkedIn. Skip to next?",
+                         font=ctk.CTkFont(size=11), text_color=FG_DIM
+                         ).pack(anchor="w", padx=12, pady=(10,4))
+            row = ctk.CTkFrame(panel, fg_color="transparent")
+            row.pack(fill="x", padx=12, pady=(0,10))
+            for label, cmd in [("✗ Skip","SKIP"),("⏹ Quit","QUIT")]:
+                ctk.CTkButton(row, text=label, width=110,
+                              fg_color=BG_FIELD, hover_color=BG_HOVER,
+                              font=ctk.CTkFont(size=11),
+                              command=lambda c=cmd: self._send_bot_action(c)
+                              ).pack(side="left", padx=(0,6))
+        elif mode == "yn_apply":
+            ctk.CTkLabel(panel, text="Ready to apply to this job?",
+                         font=ctk.CTkFont(size=11), text_color=FG_DIM
+                         ).pack(anchor="w", padx=12, pady=(10,4))
+            row = ctk.CTkFrame(panel, fg_color="transparent")
+            row.pack(fill="x", padx=12, pady=(0,10))
+            for label, cmd in [("Yes — Apply","APPLIED"),("No — Skip","SKIP")]:
+                ctk.CTkButton(row, text=label, width=130,
+                              fg_color=SUCCESS if "Apply" in label else BG_FIELD,
+                              hover_color="#1a9e4a" if "Apply" in label else BG_HOVER,
+                              font=ctk.CTkFont(size=11),
+                              command=lambda c=cmd: self._send_bot_action(c)
+                              ).pack(side="left", padx=(0,6))
 
     def _show_action_panel(self, title: str, company: str, url: str, score: str):
         """Show the Applied/Skip panel while bot waits for user."""
