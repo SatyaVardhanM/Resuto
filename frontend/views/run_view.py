@@ -1105,10 +1105,19 @@ class RunMixin:
             self._set_phase("%s %s%%" % (icon, score) if score else icon)
 
         # Stage 4b: Resume generation
-        elif "Phase 2: generating" in s:
+        elif any(p in s for p in (
+                "Phase 2: generating", "Phase 2 -- Generating",
+                "Phase 2: Generating", "Generating tailored resume",
+                "Phase 2 --")):
             self._set_phase("Generating tailored resume...")
-        elif "Resume saved:" in s:
-            self._set_phase("Resume ready")
+        elif any(p in s for p in (
+                "Resume saved:", "Resume generated:",
+                "Step 3 complete", "DOCX written successfully")):
+            self._set_phase("✅ Resume ready")
+        elif any(p in s for p in (
+                "Phase 2 complete", "Phase 2 Summary",
+                "Generated:", "resumes")):
+            self._set_phase("✅ All resumes generated")
 
         # Timeouts / warnings
         elif "Relevance check timed out" in s:
