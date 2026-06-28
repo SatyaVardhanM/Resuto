@@ -515,6 +515,20 @@ def load_seen_urls() -> set:
     return seen
 
 
+def count_applied_total() -> int:
+    """Returns total number of jobs applied to across all sessions."""
+    if not os.path.exists(DB_FILE):
+        return 0
+    conn = _connect()
+    try:
+        row = conn.execute(
+            f"SELECT COUNT(*) FROM {TABLE} WHERE status = 'applied'"
+        ).fetchone()
+        return row[0] if row else 0
+    finally:
+        conn.close()
+
+
 def load_applied_urls() -> set:
     """
     Returns the identity keys of jobs actually applied to
@@ -724,12 +738,21 @@ def save_matched_job(job: dict, relevance: dict, search_role: str = "",
 
     conn = _connect()
     try:
-        existing = conn.execute(
-            f"SELECT id FROM {TABLE} WHERE job_url = ? AND status = 'matched' LIMIT 1",
+        # Check if this URL already exists in ANY terminal state
+        # Prevents re-queuing applied/skipped/failed jobs on next scan
+        existing_any = conn.execute(
+            f"""SELECT id, status FROM {TABLE}
+                WHERE job_url = ? AND status IN
+                ('matched','applied','skipped','failed','resume_ready')
+                LIMIT 1""",
             (url,),
         ).fetchone()
 
-        if existing:
+        if existing_any:
+            if existing_any["status"] in ("applied", "skipped", "failed"):
+                # Already actioned — never overwrite or re-queue
+                return existing_any["id"]
+            # Status is matched/resume_ready — refresh JD data only
             conn.execute(
                 f"""UPDATE {TABLE}
                     SET job_description = ?, match_score = ?, skill_overlap = ?,
@@ -737,7 +760,7 @@ def save_matched_job(job: dict, relevance: dict, search_role: str = "",
                     WHERE id = ?""",
                 (job.get("description", ""), _to_int(rel.get("match_score")),
                  _to_int(rel.get("skill_overlap")), rel.get("reason", ""),
-                 now, existing["id"]),
+                 now, existing_any["id"]),
             )
         else:
             row = {name: None for name in COLUMN_NAMES}
@@ -816,7 +839,8 @@ def get_jobs_needing_resume(session_start: str = None,
                 f"""SELECT id, company, job_title, location, job_url, job_description, jd_metadata_json
                     FROM {TABLE}
                     WHERE id IN ({placeholders})
-                      AND status IN ('matched','resume_ready','applied')""",
+                      AND status IN ('matched','resume_ready')
+                      AND (resume_ready IS NULL OR resume_ready = 0)""",
                 job_ids
             ).fetchall()
         elif session_start:

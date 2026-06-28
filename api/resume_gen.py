@@ -1176,45 +1176,24 @@ def batch_generate_resumes(profile: dict, output_dirs: dict,
                 return True, "OK"
 
             jd_meta_for_val = job.get("_jd_metadata", {})
-            val_passed, val_reason = _validate_tailored(tailored, jd_meta_for_val)
             _retries = 0
 
-            if not val_passed:
-                log_warn("Validation failed (%s) — retrying at temp=0.3" % val_reason)
-                try:
-                    # Rebuild minimal retry prompt from available data
-                    retry_txt = (
-                        "Fix this resume JSON to include quantified metrics "
-                        "and use these JD keywords: " +
-                        ", ".join(jd_meta_for_val.get("skills", [])[:5])
-                    )
-                    sys_txt2 = ""
-                    usr_txt2 = retry_txt
-                    msg2 = client.messages.create(
-                        model=AI_MODEL,
-                        max_tokens=6000,
-                        temperature=0.3,
-                        timeout=90.0,
-                        system=sys_txt2 if sys_txt2 else anthropic.NOT_GIVEN,
-                        messages=[{"role":"user","content":usr_txt2}]
-                    )
-                    raw2     = msg2.content[0].text.strip()
-                    tailored2 = json.loads(raw2 if not raw2.startswith("```") else raw2.split("```")[1].lstrip("json"))
-                    val2, _  = _validate_tailored(tailored2, jd_meta_for_val)
-                    if val2:
-                        # Run through tag processor before using retry output
-                        import json as _jrt, re as _rrt
-                        _rt_str = _rrt.sub(r"</?(?:fact|estimate)[^>]*>", "", _jrt.dumps(tailored2))
-                        try:
-                            tailored = _jrt.loads(_rt_str)
-                        except Exception:
-                            tailored = tailored2
-                        log("Validation passed on retry")
-                    else:
-                        log_warn("Retry also failed validation — using first output")
-                    _retries = 1
-                except Exception as _ve:
-                    log_warn("Validation retry error: %s — using first output" % _ve)
+            # Only validate metric presence for SWE profiles.
+            # Consulting/platform profiles (ServiceNow, SAP, Salesforce) rarely
+            # have quantified metrics — skipping avoids a broken retry loop.
+            _skill_keys = list((tailored.get("skills_grouped") or {}).keys())
+            _is_consulting = any(
+                kw in " ".join(_skill_keys).lower()
+                for kw in ("module", "platform", "workflow", "automation",
+                           "integration", "servicenow", "salesforce", "sap")
+            )
+            if not _is_consulting:
+                val_passed, val_reason = _validate_tailored(tailored, jd_meta_for_val)
+                if not val_passed:
+                    log_warn("Validation failed (%s) — using output as-is" % val_reason)
+                    # No retry — broken prompt was causing 90s hang per resume
+            else:
+                val_passed = True  # consulting profile — skip metric check
 
             # Log Stage 4b to transaction
             _tx = job.get("_tx")
