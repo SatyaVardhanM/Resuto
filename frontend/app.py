@@ -169,8 +169,11 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
         self._api_save_pref = ctk.BooleanVar(value=bool(_load_api_key()))
 
         # ── Access gate (email + API key sign-in) ───────────────────
-        # Hide the (still empty) main window while the sign-in window is up
-        self.withdraw()
+        # Keep the (still empty) main window invisible while the sign-in
+        # window is up. NOT withdraw(): CustomTkinter remembers a withdraw()
+        # made before the window is first shown and then never shows it again
+        # (the app looked "closed" after login).
+        self.attributes("-alpha", 0.0)
         self._access_granted = False
         self._gate_done      = tk.BooleanVar(value=False)
 
@@ -188,7 +191,7 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
         if not self._access_granted:
             self.destroy()
             return
-        self.deiconify()
+        self.attributes("-alpha", 1.0)
 
         self.title(APP_TITLE)
         self.geometry("920x640")
