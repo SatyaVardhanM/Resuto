@@ -30,7 +30,7 @@ _SPACES = re.compile(r"[ \t]{2,}")
 
 # Regex catches domain-specific acronyms Haiku might miss
 # e.g. CKYC, CERSAI, STIBO, SWIFT, HIPAA, GDPR
-_ACRONYM_RE = re.compile(r'[A-Z]{3,7}')
+_ACRONYM_RE = re.compile(r'\b[A-Z]{3,7}\b')
 _ACRONYM_BLACKLIST = {
     "AND","THE","FOR","USA","GMT","UTC","URL","API","SQL","CSS",
     "HTML","JSON","REST","HTTP","AWS","GCP","PDF","XML","CSV",

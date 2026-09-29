@@ -258,10 +258,10 @@ def check_job_relevance(profile: dict, job: dict, job_description: str,
     # Compress bullets to pure technical signal — strip filler, keep domain keywords
     # e.g. "Responsible for developing and maintaining..." → "Developed CKYC pipeline C#/.NET SQL"
     _FILLER = re.compile(
-        r"(responsible for|worked on|helped|assisted|collaborated|supported"
+        r"\b(responsible for|worked on|helped|assisted|collaborated|supported"
         r"|involved in|participated in|contributed to|tasked with"
         r"|developed and|designed and|built and|created and|managed and"
-        r"|as part of|in order to|so that|which resulted in)",
+        r"|as part of|in order to|so that|which resulted in)\b",
         re.IGNORECASE)
 
     def _compress_bullet(b: str) -> str:

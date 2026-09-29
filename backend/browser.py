@@ -26,46 +26,21 @@ def get_chrome_profile_path() -> str:
     """
     Returns the Chrome profile path for the bot.
 
-    Priority:
-    1. custom path stored in local_settings.json → chrome_profile_path
-    2. default: BotChromeProfile/ next to the exe (or project root)
+    Comes from the single settings file (core.settings) — default
+    Documents\\Resuto\\BotChromeProfile. Previously this read a different
+    local_settings.json next to the exe, so a custom path chosen in
+    Settings was ignored.
 
     The profile keeps LinkedIn logged in between runs.
     Never share your main Chrome profile — Chrome locks profiles
     to one process, which causes launch failures.
     """
-    import sys as _s, json as _j
-
-    # 1. Check local_settings.json for custom path
+    from core.settings import get_settings, _resuto_documents_dir
     try:
-        if getattr(_s, "frozen", False):
-            settings_file = os.path.join(
-                os.path.dirname(_s.executable), "local_settings.json")
-        else:
-            settings_file = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "local_settings.json")
-
-        if os.path.exists(settings_file):
-            with open(settings_file, encoding="utf-8") as _f:
-                data = _j.loads(_f.read())
-            custom = data.get("chrome_profile_path", "").strip()
-            if custom:
-                os.makedirs(custom, exist_ok=True)
-                return custom
+        custom = str(get_settings().get("chrome_profile_path", "") or "").strip()
     except Exception:
-        pass
-
-    # 2. Default path next to exe / project root
-    if getattr(_s, "frozen", False):
-        project_dir = os.path.dirname(_s.executable)
-    else:
-        import sys as _sys4
-        project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        if not os.path.isdir(os.path.join(project_dir, "backend")):
-            project_dir = os.path.dirname(os.path.abspath(_sys4.executable))
-
-    profile_dir = os.path.join(project_dir, "BotChromeProfile")
+        custom = ""
+    profile_dir = custom or os.path.join(_resuto_documents_dir(), "BotChromeProfile")
     os.makedirs(profile_dir, exist_ok=True)
     return profile_dir
 
@@ -290,7 +265,7 @@ async def create_logged_in_context(playwright):
             )
     else:
         log("LinkedIn: already logged in")
-    print("   [OK] Already logged into LinkedIn.\n")
+        print("   [OK] Already logged into LinkedIn.\n")
 
     return context, context, page
 

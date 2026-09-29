@@ -1165,7 +1165,7 @@ def batch_generate_resumes(profile: dict, output_dirs: dict,
                 text_l = text.lower()
                 # Check 1: at least 1 metric (%, $, number with unit)
                 import re as _re
-                has_metric = bool(_re.search(r"\d+\s*(%|\$|x|hrs?|days?|ms|sec|min|k|m)", text_l))
+                has_metric = bool(_re.search(r"\d+\s*(%|\$|x|hrs?|days?|ms|sec|min|k\b|m\b)", text_l))
                 # Check 2: at least 3 JD keywords appear
                 jd_kws    = [k.lower() for k in jd_meta.get("skills", [])]
                 kw_hits   = sum(1 for k in jd_kws if k in text_l)

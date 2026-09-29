@@ -55,26 +55,95 @@ def _exe_dir() -> str:
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+_MIGRATED = False
+
+
+def _legacy_settings_files() -> list:
+    """
+    Places older versions wrote local_settings.json:
+      - next to the exe / project root (core.settings, backend.browser)
+      - next to python.exe / resuto.exe (frontend.constants — API key, font)
+    """
+    cands = [
+        os.path.join(_exe_dir(), "local_settings.json"),
+        os.path.join(os.path.dirname(sys.executable), "local_settings.json"),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     "local_settings.json"),
+    ]
+    out = []
+    for c in cands:
+        c = os.path.normcase(os.path.abspath(c))
+        if c not in out:
+            out.append(c)
+    return out
+
+
+def _migrate_legacy(docs_path: str) -> None:
+    """
+    One-time merge of old settings files into Documents\\Resuto\\local_settings.json.
+    Keys already in the Documents file win; old files are renamed to
+    local_settings.json.migrated so this never runs twice.
+    """
+    global _MIGRATED
+    if _MIGRATED:
+        return
+    _MIGRATED = True
+    try:
+        merged = {}
+        if os.path.exists(docs_path):
+            with open(docs_path, encoding="utf-8") as f:
+                merged = json.load(f)
+    except Exception:
+        merged = {}
+    changed = False
+    for legacy in _legacy_settings_files():
+        if os.path.normcase(legacy) == os.path.normcase(os.path.abspath(docs_path)):
+            continue
+        if not os.path.exists(legacy):
+            continue
+        try:
+            with open(legacy, encoding="utf-8") as f:
+                old = json.load(f)
+            for k, v in old.items():
+                if k not in merged and v not in ("", None):
+                    merged[k] = v
+                    changed = True
+            os.replace(legacy, legacy + ".migrated")
+        except Exception:
+            pass
+    if changed:
+        try:
+            with open(docs_path, "w", encoding="utf-8") as f:
+                json.dump(merged, f, indent=2)
+            print("[Setup] Merged old settings into Documents\\Resuto\\local_settings.json")
+        except Exception:
+            pass
+
+
 def _settings_file() -> str:
     """
-    Returns path to local_settings.json.
-    Stored in Documents\\Resuto\\ so users can find it and it
-    survives app reinstalls without losing settings.
-    Falls back to exe dir if Documents unavailable.
+    THE settings file — Documents\\Resuto\\local_settings.json.
+    Every module (frontend, backend, core) reads and writes this one file.
     """
     docs_path = os.path.join(_resuto_documents_dir(), "local_settings.json")
-
-    # Migrate: if old settings exist next to exe, move them to Documents
-    old_path = os.path.join(_exe_dir(), "local_settings.json")
-    if os.path.exists(old_path) and not os.path.exists(docs_path):
-        try:
-            import shutil
-            shutil.move(old_path, docs_path)
-            print("[Setup] Migrated local_settings.json to Documents\\Resuto\\")
-        except Exception:
-            return old_path   # fallback if move fails
-
+    _migrate_legacy(docs_path)
     return docs_path
+
+
+def load_all() -> dict:
+    """Public: full settings dict (empty on error)."""
+    return _load()
+
+
+def update(**values) -> None:
+    """Public: set/overwrite keys and save. A value of None removes the key."""
+    data = _load()
+    for k, v in values.items():
+        if v is None:
+            data.pop(k, None)
+        else:
+            data[k] = v
+    _save(data)
 
 
 def _default_resume_path() -> str:

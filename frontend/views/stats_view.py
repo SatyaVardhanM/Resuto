@@ -197,9 +197,9 @@ class StatsMixin:
         # Incremental job list update
         # Track rows by position; only destroy/create if count changed
         self._job_expanded = None
-        STATUS_ICON = {"applied":"✓","skipped":"−","failed":"✕","matched":"▶","scanning":"●"}
-        STATUS_COL  = {"applied":SUCCESS,"skipped":WARNING,"failed":DANGER,"matched":ACCENT,"scanning":MUTED}
-        DECISION    = {"applied":"Applied","skipped":"Skipped","failed":"Failed","matched":"Queued","scanning":"Analyzing..."}
+        STATUS_ICON = {"applied":"✓","skipped":"−","failed":"✕","matched":"▶","resume_ready":"▶","scanning":"●"}
+        STATUS_COL  = {"applied":SUCCESS,"skipped":WARNING,"failed":DANGER,"matched":ACCENT,"resume_ready":ACCENT,"scanning":MUTED}
+        DECISION    = {"applied":"Applied","skipped":"Skipped","failed":"Failed","matched":"Queued","resume_ready":"Ready to apply","scanning":"Analyzing..."}
 
         def _badge(job, status, decision, s_col):
             """Return (label, color) — stretch jobs get amber badge."""

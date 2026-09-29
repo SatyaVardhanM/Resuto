@@ -261,7 +261,13 @@ async def run_applications(
     global_seen: set = None,
     application_mode: str = "continuous",
     gui_filters: dict = None,
+    phase1_only: bool = False,
 ) -> int:
+    """
+    Phase 1 (scan + relevance) then Phase 2/3 (resumes + applying).
+    Returns applied_total — or, when phase1_only=True (keyword fallbacks),
+    the number of jobs MATCHED, without running Phase 2/3.
+    """
     import db.tracker as tracker
     from api.resume_gen import batch_generate_resumes
     from backend.browser import guided_apply_session
@@ -344,12 +350,8 @@ async def run_applications(
                 log("LinkedIn shows Applied: %s — skipping" % title_short)
                 print("     <- LinkedIn: already applied — skipping", flush=True)
                 try:
-                    db_id = tracker.save_scanning_job(job)
-                    tracker.update_job_relevance(
-                        db_id, job,
-                        {"is_relevant": True, "match_score": 100,
-                         "reason": "Already applied on LinkedIn"},
-                        search_role=job_keyword, apply_mode="applied")
+                    # Insert directly as 'applied' — never touch Queued/Matched count
+                    tracker.save_externally_applied_job(job, job_keyword)
                 except Exception:
                     pass
                 continue
@@ -371,16 +373,10 @@ async def run_applications(
                 log("LinkedIn: already applied to '%s' @ %s — skipping" % (
                     title_short, job.get("company","")))
                 print("     <-  Already applied on LinkedIn — skipping.")
-                # Mark in DB if we have a row
-                if db_row_id and db_row_id > 0:
-                    try:
-                        tracker.update_job_relevance(
-                            db_row_id, job,
-                            {"is_relevant": True, "match_score": 100,
-                             "reason": "Already applied on LinkedIn"},
-                            search_role=job_keyword, apply_mode="applied")
-                    except Exception:
-                        pass
+                try:
+                    tracker.save_externally_applied_job(job, job_keyword)
+                except Exception:
+                    pass
                 already_seen_this_run.update(job_keys)
                 continue
 
@@ -423,7 +419,10 @@ async def run_applications(
                 if my_prof and isinstance(my_prof, dict):
                     for exp in my_prof.get("experience",[]):
                         if _w(exp.get("title","")) & t_words: return True
-                return True  # unknown → let Claude decide
+                # No word overlap with the search term or any past job title:
+                # skip without spending a Claude call (previously this
+                # returned True, so the pre-filter never skipped anything)
+                return False
 
             _is_location_only = not job_keyword or not job_keyword.strip()
 
@@ -557,6 +556,9 @@ async def run_applications(
             log_error("Scan loop error: %s" % e)
             print("\n[ERR] Error during scan: %s" % e)
 
+    if phase1_only:
+        return matched_count
+
     if matched_count == 0:
         print("\n   No new matching jobs found this run.")
         print("   Scanned %d jobs total." % scanned_count)
@@ -574,17 +576,22 @@ async def run_applications(
                 for fb_keyword in fallbacks:
                     log("Fallback search: '%s'" % fb_keyword)
                     print("\n   [FALLBACK] Trying: '%s'..." % fb_keyword)
+                    # Phase 1 only — same filters / seen-set / mode as the
+                    # main search; Phase 2/3 runs ONCE below for everything
                     fb_matched = await run_applications(
                         browser, context, page,
                         fb_keyword, job_location,
-                        max_jobs, unlimited, applied_total,
-                        fb_keyword, apply_mode, my_profile)
-                    if fb_matched and fb_matched >= MIN_NEW_JOBS_BEFORE_FALLBACK:
-                        log("Fallback '%s' found %d matches — stopping" % (
-                            fb_keyword, fb_matched))
-                        matched_count += fb_matched
-                        break
+                        max_jobs - matched_count, unlimited, applied_total,
+                        fb_keyword, apply_mode, my_profile,
+                        global_seen=already_seen_this_run,
+                        application_mode=application_mode,
+                        gui_filters=gui_filters,
+                        phase1_only=True)
+                    matched_count += fb_matched or 0
                     log("Fallback '%s': %d matches" % (fb_keyword, fb_matched or 0))
+                    if matched_count >= MIN_NEW_JOBS_BEFORE_FALLBACK:
+                        log("Fallbacks found %d matches — stopping" % matched_count)
+                        break
             else:
                 log("No fallbacks generated for '%s'" % job_keyword)
         except Exception as _fbe:
@@ -603,16 +610,16 @@ async def run_applications(
         # Generate resume for ONE job at a time, pause for user action
         print("\n[>>] One-by-one mode: generating and applying one job at a time.")
         remaining = max_jobs if not unlimited else 9999
-        matched_jobs = tracker.get_jobs_ready_to_apply.__wrapped__() \
-            if hasattr(tracker.get_jobs_ready_to_apply, "__wrapped__") \
-            else None
 
-        # Get all matched jobs not yet actioned
+        # Only jobs matched in THIS session — previously every 'matched' row
+        # in the whole history was pulled in and got a resume generated.
         import db.tracker as _t2
         conn = _t2._connect()
         try:
             all_matched = [dict(r) for r in conn.execute(
-                f"SELECT * FROM {_t2.TABLE} WHERE status = \'matched\'"
+                f"SELECT * FROM {_t2.TABLE} WHERE status = 'matched' "
+                f"AND logged_at >= ? ORDER BY match_score DESC",
+                (SESSION_START,)
             ).fetchall()]
         except Exception:
             all_matched = []
@@ -681,15 +688,34 @@ async def run_applications(
         ready_jobs = tracker.get_jobs_ready_to_apply()
         if ready_jobs:
             print("\n" + "=" * 60)
-            print("   %d job(s) have resumes ready." % len(ready_jobs))
+            print("   %d job(s) have resumes ready. Review each one:" % len(ready_jobs))
             print("=" * 60)
-            print("   Ready to start applying now? [y / n]: ", flush=True)
-            answer = (await loop.run_in_executor(None, input, "")).strip().lower()
-            if answer in ("y", "yes"):
-                result = await guided_apply_session(context, ready_jobs, reapply=False)
-                applied_total += result["applied"]
-            else:
-                print("   [OK] No problem -- the resumes are saved. Run again when ready.")
+
+            # Continuous mode: show Apply/Skip panel for each ready job
+            # Same as one-at-a-time but all resumes are pre-generated
+            # (remaining was never set in this branch → UnboundLocalError)
+            remaining = (max_jobs - applied_total) if not unlimited else 9999
+            for job in ready_jobs:
+                if remaining <= 0:
+                    print("[>>] Applied to %d job(s). Limit reached." % max_jobs)
+                    break
+
+                action = await loop.run_in_executor(
+                    None, _wait_for_user_action, job, loop)
+
+                if action == BOT_RESPONSE_APPLIED:
+                    result = await guided_apply_session(
+                        context, [job], reapply=False)
+                    applied = result.get("applied", 0)
+                    if applied:
+                        applied_total += 1
+                        remaining     -= 1
+                        print("[>>] Applied. Remaining: %d" % remaining)
+                    else:
+                        print("[>>] Apply attempt failed — not counted.")
+                else:
+                    tracker.mark_job_outcome(job["id"], "skipped")
+                    print("[>>] Skipped.")
 
     return applied_total
 
@@ -765,6 +791,21 @@ async def run_phase2_only(job_ids: list = None, gui_mode: bool = True):
         results.get("generated",0), results.get("failed",0)))
 
 
+def _normalize_filter_values(values, code_map):
+    """Accept LinkedIn codes ("2", "F") OR the names Settings saves
+    ("entry", "full_time"). Previously only codes were accepted, so
+    every filter chosen in Settings was silently dropped."""
+    names = set(code_map.values())
+    out = []
+    for v in values or []:
+        v = str(v).strip()
+        if v in code_map:
+            out.append(code_map[v])
+        elif v.lower() in names:
+            out.append(v.lower())
+    return out or None
+
+
 async def main(gui_args=None):
     from datetime import datetime as _dt
     global SESSION_START
@@ -786,7 +827,7 @@ async def main(gui_args=None):
 
     gui_mode = gui_args is not None
 
-    print("\n[AI] Job Application Automation System")
+    print("\n[AI] Resuto")
     print("=" * 50)
 
     api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -909,10 +950,11 @@ async def main(gui_args=None):
         _wp_map   = {"1":"on_site","2":"remote","3":"hybrid"}
 
         _date_posted = getattr(gui_args, "date_posted", "any") or "any"
+
         gui_filters = {
-            "exp_levels":  [_exp_map[e] for e in _raw_exp if e in _exp_map] or None,
-            "job_types":   [_jt_map[j] for j in _raw_jt if j in _jt_map]  or None,
-            "workplace":   [_wp_map[w] for w in _raw_wp if w in _wp_map]   or None,
+            "exp_levels":  _normalize_filter_values(_raw_exp, _exp_map),
+            "job_types":   _normalize_filter_values(_raw_jt,  _jt_map),
+            "workplace":   _normalize_filter_values(_raw_wp,  _wp_map),
             "date_posted": _date_posted if _date_posted != "any" else None,
         }
         # Remove None values so get_active_filters uses config defaults for unset
@@ -1127,6 +1169,7 @@ async def main(gui_args=None):
                 my_profile    = my_profile,
                 global_seen   = _session_seen,  # shared across all roles
                 gui_filters   = gui_filters if gui_mode else None,
+                application_mode = application_mode,   # was never passed
             )
 
         print("\n" + "=" * 50)
@@ -1155,7 +1198,9 @@ async def main(gui_args=None):
     print("\n[OK] Done!\n")
 
 
-if __name__ == "__main__":
+def build_arg_parser() -> argparse.ArgumentParser:
+    """Single source of truth for bot flags — used by `python orchestrator.py`
+    AND by the compiled exe's --bot-mode (frontend/app.py)."""
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--gui",          action="store_true")
     parser.add_argument("--location",     default="")
@@ -1175,7 +1220,12 @@ if __name__ == "__main__":
                         help="Skip Phase 1, run Phase 2 only")
     parser.add_argument("--job-ids",      nargs="+", type=int, default=[],
                         help="Specific DB job IDs to generate resumes for")
-    args, _ = parser.parse_known_args()
+    return parser
+
+
+def run_from_argv(argv=None) -> None:
+    """Parse bot flags and run the requested mode."""
+    args, _ = build_arg_parser().parse_known_args(argv)
 
     # Phase 2 only mode — manual resume generation from History tab
     if args.phase2_only:
@@ -1184,3 +1234,7 @@ if __name__ == "__main__":
             gui_mode=args.gui))
     else:
         asyncio.run(main(gui_args=args if args.gui else None))
+
+
+if __name__ == "__main__":
+    run_from_argv()

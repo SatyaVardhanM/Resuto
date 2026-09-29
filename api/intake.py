@@ -683,6 +683,7 @@ def enhance_experience(xml_path: str) -> str:
 
     if any_enhanced:
         # Pretty-print the XML with indentation
+        tree = ET.ElementTree(root)   # was undefined — edits were never saved
         ET.indent(tree, space="    ")
         tree.write(xml_path, encoding="unicode", xml_declaration=True)
         print(f"  [OK] Enhanced resume saved to: {xml_path}")
@@ -821,6 +822,7 @@ def main():
         if hl_el is None:
             hl_el = ET.SubElement(meta, "experience_highlight")
         hl_el.text = "true" if experience_highlight else "false"
+        tree = ET.ElementTree(root)   # was undefined — edits were never saved
         ET.indent(tree, space="    ")
         tree.write(xml_path, encoding="unicode", xml_declaration=True)
         xml_string = open(xml_path, encoding="utf-8").read()

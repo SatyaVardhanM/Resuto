@@ -72,16 +72,22 @@ def check_for_update(timeout: int = 8) -> dict | None:
             log("Updater: up to date (v%s)" % current_ver)
             return None
 
-        # Find Windows installer in release assets
+        # Find Windows installer + its published SHA-256 in release assets
         download_url = None
+        sha256_url   = None
         for asset in data.get("assets", []):
             name = asset.get("name", "").lower()
-            if name.endswith(".exe") and "setup" in name:
+            if name.endswith(".exe") and "setup" in name and not download_url:
                 download_url = asset.get("browser_download_url")
-                break
+            elif name.endswith(".exe.sha256"):
+                sha256_url = asset.get("browser_download_url")
 
         if not download_url:
             log_warn("Updater: v%s available but no installer asset found" % latest_ver)
+            return None
+        if not sha256_url:
+            log_warn("Updater: v%s has no .sha256 asset — refusing unverified update"
+                     % latest_ver)
             return None
 
         log("Updater: new version v%s available (current: v%s)" % (
@@ -89,6 +95,7 @@ def check_for_update(timeout: int = 8) -> dict | None:
         return {
             "version":       latest_ver,
             "download_url":  download_url,
+            "sha256_url":    sha256_url,
             "release_notes": release_body.strip(),
             "tag":           latest_tag,
         }
@@ -98,17 +105,34 @@ def check_for_update(timeout: int = 8) -> dict | None:
         return None
 
 
+def _expected_sha256(sha256_url: str) -> str:
+    """Fetch '<hex>  Resuto-Setup.exe' and return the lowercase hex digest."""
+    import requests
+    resp = requests.get(sha256_url, timeout=30)
+    resp.raise_for_status()
+    digest = resp.text.strip().split()[0].lower()
+    if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+        raise ValueError("malformed .sha256 asset")
+    return digest
+
+
 def download_and_install(download_url: str,
                           version: str,
-                          progress_cb=None) -> bool:
+                          progress_cb=None,
+                          sha256_url: str = None) -> bool:
     """
-    Download the installer to a temp file and run it silently.
-    The installer preserves user data (local_settings, db, xml).
-    The app will exit so the installer can replace the exe.
-    Returns True if install started successfully.
+    Download the installer to a temp file, verify its SHA-256 against the
+    hash published with the release, then run it silently.
+    The installer relaunches the app when it finishes.
+    Returns True if install started successfully (caller should exit).
     """
     try:
+        import hashlib
         import requests
+        if not sha256_url:
+            log_error("Updater: no SHA-256 for v%s — not installing" % version)
+            return False
+        expected = _expected_sha256(sha256_url)
         log("Updater: downloading v%s installer..." % version)
 
         tmp_dir  = Path(tempfile.gettempdir()) / "jab_update"
@@ -122,16 +146,28 @@ def download_and_install(download_url: str,
         received  = 0
         chunk_sz  = 65536
 
+        hasher = hashlib.sha256()
         with open(tmp_path, "wb") as f:
             for chunk in resp.iter_content(chunk_size=chunk_sz):
                 if chunk:
                     f.write(chunk)
+                    hasher.update(chunk)
                     received += len(chunk)
                     if progress_cb and total:
                         pct = int(received / total * 100)
                         progress_cb(pct)
 
         log("Updater: download complete → %s" % tmp_path)
+
+        actual = hasher.hexdigest()
+        if actual != expected:
+            log_error("Updater: SHA-256 mismatch (expected %s, got %s) — deleting"
+                      % (expected, actual))
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
+            return False
 
         # Launch installer silently — /VERYSILENT preserves user data
         # (installer.iss [Code] backs up and restores local_settings.json etc.)
@@ -152,7 +188,8 @@ def download_and_install(download_url: str,
 def check_in_background(on_update_found):
     """
     Run update check in background thread.
-    on_update_found(info_dict) called on main thread if update available.
+    on_update_found(info_dict) is called ON THE WORKER THREAD — GUI callers
+    must hand the result to the Tk thread (e.g. via a queue).
     Safe to call on every startup — exits silently if no update.
     """
     def _worker():

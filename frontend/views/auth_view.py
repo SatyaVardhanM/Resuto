@@ -3,11 +3,13 @@ frontend/views/auth_view.py
 ───────────────────────────
 Access gate — always shows Login / Register choice on startup.
 
-Register → Full Name + Email + API Key
+Register → Full Name + Email + API Key → wait for admin approval
 Login    → Email + API Key
-           - Match         → update machine info → open app
-           - Key changed   → show Update Key button
-           - Not found     → prompt to register
+           - Match + approved → update machine info → open app
+           - Match + pending  → wait for admin approval
+           - Rejected/revoked → blocked
+           - Key changed      → Update Key form (needs admin re-approval)
+           - Not found        → prompt to register
 """
 
 import os
@@ -72,12 +74,16 @@ class AccessWindow(ctk.CTkToplevel):
         self._q: queue.Queue = queue.Queue()
         self._mode = None           # "login" | "register" | "update_key"
 
-        self.title("Resuto — Access")
+        self.title("Resuto — Sign in")
         self.geometry("460x560")
         self.resizable(False, False)
         self.configure(fg_color=BG)
-        self.grab_set()
         self.lift()
+        self.focus_force()
+        # The main window is hidden during sign-in, so keep this one in front
+        self.attributes("-topmost", True)
+        self.after(400, lambda: self.attributes("-topmost", False))
+        self.after(50, self._safe_grab)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self._build()
@@ -179,10 +185,10 @@ class AccessWindow(ctk.CTkToplevel):
     def _build_update_key_form(self):
         self._update_frame = ctk.CTkFrame(self._card, fg_color="transparent")
 
-        _label(self._update_frame, "Update API Key", "body").pack(pady=(20, 4))
+        _label(self._update_frame, "Change API Key", "body").pack(pady=(20, 4))
         _label(self._update_frame,
-               "Your API key has changed. Enter your email\n"
-               "and new API key to update your account.",
+               "Changed your Anthropic key? Enter your email and\n"
+               "new key. The change needs approval before you sign in.",
                "small", MUTED, justify="center").pack(pady=(0, 16))
 
         self._u_email = _entry(self._update_frame, "Email Address")
@@ -201,7 +207,7 @@ class AccessWindow(ctk.CTkToplevel):
              color=BG_HOVER, hover=BG_FIELD)
         self._back_btn.grid(row=0, column=0, sticky="ew", padx=(0, 4))
 
-        self._update_btn = _btn(btn_row, "Update Key", self._do_update_key,
+        self._update_btn = _btn(btn_row, "Submit for approval", self._do_update_key,
              color=WARNING, hover="#C47000")
         self._update_btn.grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
@@ -260,9 +266,19 @@ class AccessWindow(ctk.CTkToplevel):
         try:
             from core.license import login_user
             result = login_user(email, api_key)
+            if result == "pending":
+                self._wait_for_approval(email, api_key)
+                return
             self._q.put(("login", result, email, api_key))
         except Exception as e:
             self._q.put(("error", str(e)[:100], "", ""))
+
+    def _wait_for_approval(self, email, api_key, reason="registration"):
+        """Runs on a worker thread: show waiting UI, block until decided."""
+        from core.license import poll_approval
+        self._q.put(("show_waiting", reason, "", ""))
+        approval = poll_approval(email)
+        self._q.put(("approval", approval, email, api_key))
 
     # ── Action: Register ──────────────────────────────────────────
     def _do_register(self):
@@ -285,16 +301,13 @@ class AccessWindow(ctk.CTkToplevel):
 
     def _bg_register(self, name, email, api_key):
         try:
-            from core.license import register_user, poll_approval
+            from core.license import register_user
             result = register_user(name, email, api_key)
             if result != "ok":
                 self._q.put(("register", result, email, api_key))
                 return
-            # Tell main thread to show waiting UI
-            self._q.put(("show_waiting", "", "", ""))
-            # Poll until admin approves/rejects
-            approval = poll_approval(email, timeout=600, interval=5)
-            self._q.put(("approval", approval, email, api_key))
+            # Show waiting UI and poll until admin approves/rejects
+            self._wait_for_approval(email, api_key, "registration")
         except Exception as e:
             self._q.put(("error", str(e)[:100], "", ""))
 
@@ -317,6 +330,9 @@ class AccessWindow(ctk.CTkToplevel):
         try:
             from core.license import update_api_key
             result = update_api_key(email, api_key)
+            if result == "pending":
+                self._wait_for_approval(email, api_key, "key_change")
+                return
             self._q.put(("update_key", result, email, api_key))
         except Exception as e:
             self._q.put(("error", str(e)[:100], "", ""))
@@ -333,6 +349,7 @@ class AccessWindow(ctk.CTkToplevel):
             if kind == "show_waiting":
                 self._set_buttons_state("disabled")
                 self.update_idletasks()
+                self._waiting_reason = result
                 self._dot_count = 0
                 self._animate_dots()
 
@@ -342,10 +359,15 @@ class AccessWindow(ctk.CTkToplevel):
                     self._grant(api_key)
                 elif result == "rejected":
                     self._set_buttons_state("normal")
-                    self._set_status("Registration rejected. Contact support.", DANGER)
+                    self._set_status("Your request was not approved.\n"
+                                     "Contact support if you think this is a mistake.", DANGER)
+                elif result == "revoked":
+                    self._set_buttons_state("normal")
+                    self._set_status("Access to this account has been revoked.", DANGER)
                 elif result == "timeout":
                     self._set_buttons_state("normal")
-                    self._set_status("Approval timed out. Try again.", DANGER)
+                    self._set_status("Still waiting for approval.\n"
+                                     "You can close Resuto and log in again later.", WARNING)
                 else:
                     self._set_buttons_state("normal")
                     self._set_status("Could not check approval. Check connection.", DANGER)
@@ -356,30 +378,35 @@ class AccessWindow(ctk.CTkToplevel):
                     self._grant(api_key)
                 elif result == "key_changed":
                     self._set_status(
-                        "Your API key has changed.\n"
-                        "Click 'Update API Key' to update it.", WARNING)
+                        "This API key doesn't match the account.\n"
+                        "Changed keys? Submit the new one for approval.", WARNING)
                     # Switch to update key form pre-filled with email
                     self.after(1200, lambda: self._show_update_key(email))
                 elif result == "not_registered":
                     self._set_status(
                         "No account found for this email.\n"
                         "Please register first.", DANGER)
+                elif result == "rejected":
+                    self._set_status("Your registration was not approved.", DANGER)
+                elif result == "revoked":
+                    self._set_status("Access to this account has been revoked.", DANGER)
                 elif result == "creds_error":
                     self._set_status(
                         "Server credentials error.\n"
                         "Please contact support.", DANGER)
                 elif result == "network_error":
                     self._set_status(
-                        "Connection timed out.\n"
+                        "Couldn't reach the server.\n"
                         "Check your internet and try again.", DANGER)
+                elif result == "quota_error":
+                    self._set_status(
+                        "Server busy. Please try again in a moment.", WARNING)
                 else:
                     self._set_status(
-                        "Email or API key is incorrect.", DANGER)
+                        "Something went wrong. Please try again.", DANGER)
 
             elif kind == "register":
-                if result == "ok":
-                    self._grant(api_key)
-                elif result == "already_exists":
+                if result == "already_exists":
                     self._set_status(
                         "This email is already registered.\n"
                         "Please use Login instead.", WARNING)
@@ -403,8 +430,8 @@ class AccessWindow(ctk.CTkToplevel):
                         "Check your internet connection.", DANGER)
 
             elif kind == "update_key":
-                if result == "ok":
-                    self._grant(api_key)
+                if result == "revoked":
+                    self._set_status("Access to this account has been revoked.", DANGER)
                 elif result == "invalid_key":
                     self._set_status(
                         "New API key is invalid. Please check and try again.", DANGER)
@@ -435,8 +462,9 @@ class AccessWindow(ctk.CTkToplevel):
     # ── Grant access ──────────────────────────────────────────────
     def _grant(self, api_key: str):
         os.environ["ANTHROPIC_API_KEY"] = api_key
+        self._stop_dots()
         self.after(0, lambda: self._set_status("Access granted!", SUCCESS))
-        self.after(700, lambda: (self.destroy(), self._on_success()))
+        self.after(700, lambda: (self.destroy(), self._on_success(api_key)))
 
     # ── Helpers ───────────────────────────────────────────────────
     def _set_status(self, msg, color=None):
@@ -464,7 +492,11 @@ class AccessWindow(ctk.CTkToplevel):
         if not self.winfo_exists():
             return
         dots = "." * (self._dot_count % 4)
-        msg = "Waiting for admin approval" + dots + " Check Telegram to approve."
+        if getattr(self, "_waiting_reason", "") == "key_change":
+            msg = "Your new API key is waiting for approval" + dots
+        else:
+            msg = "Your account is waiting for approval" + dots
+        msg += "\nYou can leave this open, or close Resuto and log in later."
         self._set_status(msg, WARNING)
         self._dot_count += 1
         self._dot_timer = self.after(600, self._animate_dots)
@@ -476,7 +508,14 @@ class AccessWindow(ctk.CTkToplevel):
             except Exception:
                 pass
 
+    def _safe_grab(self):
+        try:
+            self.grab_set()
+        except Exception:
+            pass   # grab can fail if the window is not yet viewable
+
     def _on_close(self):
+        self._stop_dots()
         self.master.destroy()
 
 

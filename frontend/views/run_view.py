@@ -32,6 +32,10 @@ from frontend.constants import (
     APP_TITLE, BOT_SCRIPT,
     _settings_file, _load_api_key, _save_api_key, _clear_api_key,
     _init_fonts, _load_font_pref,
+    # Bot-output patterns — previously only defined in app.py, which made
+    # _handle_line raise NameError on every line
+    _ERROR_RE, _PHASE_MAP, _DSQ_RE, _NF_RE, _APPLY_RE,
+    _IDLE_RE, _LAST_JOB_RE,
 )
 from frontend.views.dialogs   import ReviewWindow
 
@@ -119,8 +123,12 @@ class RunMixin:
             command=self._start_validate)
         self._start_main_btn.pack()
 
-        # Start the pulse animation
-        self._pulse_active = False
+        # Start the pulse animation (pauses while hovered or not visible)
+        self._pulse_hover = False
+        self._start_main_btn.bind(
+            "<Enter>", lambda e: setattr(self, "_pulse_hover", True), add="+")
+        self._start_main_btn.bind(
+            "<Leave>", lambda e: setattr(self, "_pulse_hover", False), add="+")
         self._start_pulse()
 
         # Error / status message below button
@@ -160,10 +168,13 @@ class RunMixin:
         colours = [ACCENT, ACCENT_HV, "#7B89F8", ACCENT_HV, ACCENT]
         idx = self._pulse_state % len(colours)
         try:
-            self._start_main_btn.configure(fg_color=colours[idx])
+            visible = (getattr(self, "_active_tab", 0) == 0
+                       and self._start_main_btn.winfo_ismapped())
+            if visible and not getattr(self, "_pulse_hover", False):
+                self._start_main_btn.configure(fg_color=colours[idx])
+                self._pulse_state += 1
         except Exception:
-            return
-        self._pulse_state += 1
+            return   # window closed
         # Slow the pulse down — 600ms per step
         self.after(600, self._start_pulse)
 
@@ -1099,6 +1110,10 @@ class RunMixin:
                         _save_api_key(self._api_var.get().strip())
                     try: self._refresh_start_status()
                     except Exception: pass
+                elif kind == "update_found":    self._offer_update(data)
+                elif kind == "update_progress":
+                    self._set_status("Downloading update... %d%%" % data)
+                elif kind == "update_done":     self._on_update_done(data)
                 elif kind == "key_fail":
                     self._key_status_lbl.configure(
                         text=f"✕  {data}", text_color=DANGER)
@@ -1248,23 +1263,24 @@ class RunMixin:
             self._tb_buffer = [s]
             self._tb_active = True
         elif self._tb_active:
-            if s.strip():
+            if not s:
+                # Blank line ends the traceback
+                self._flush_traceback()
+            else:
                 self._tb_buffer.append(s)
-                # Flush on ErrorType: message line — not on File/indented lines
-                import re as _re2
-                if (s and not s.startswith(" ") and not s.startswith("\t")
-                        and not s.startswith("File ")
-                        and _re2.match(r"[A-Za-z][A-Za-z0-9_]*Error.*:", s)):
-                    self._append_error("\n".join(self._tb_buffer))
-                    self._tb_buffer = []
-                    self._tb_active = False
-                # Blank line ends traceback
-                if self._tb_buffer:
-                    self._append_error("\n".join(self._tb_buffer))
-                self._tb_buffer = []
-                self._tb_active = False
+                # The final "SomeError: message" line is NOT indented;
+                # "File ..." and source lines are.
+                if (not line.startswith((" ", "\t"))
+                        and re.match(r"[A-Za-z_][\w.]*(Error|Exception|Interrupt|Exit)\b", s)):
+                    self._flush_traceback()
         elif _ERROR_RE.search(line) and not s.startswith("[WARN]"):
             self._append_error(line)
+
+    def _flush_traceback(self):
+        if self._tb_buffer:
+            self._append_error("\n".join(self._tb_buffer))
+        self._tb_buffer = []
+        self._tb_active = False
 
     def _parse_activity(self, s: str):
         """Update the live activity strip. Phase-aware — never shows

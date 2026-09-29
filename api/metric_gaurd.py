@@ -186,7 +186,7 @@ def build_factual_scaffolding(profile: dict,
 
     # Regex to find numeric values to wrap as facts
     _NUM_RE = _re.compile(
-        r"(\d[\d,]*\s*(?:K|M|B|k|m)?"       # numbers: 20K, 1,000
+        r"(\d[\d,]*\s*(?:K|M|B|k|m)?\b"       # numbers: 20K, 1,000
         r"|\d+\s*%"                              # percentages: 70%
         r"|\$\s*\d[\d,]*)",                      # dollars: $50,000
         _re.IGNORECASE

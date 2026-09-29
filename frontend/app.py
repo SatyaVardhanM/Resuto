@@ -1,6 +1,6 @@
 # app.py
 """
-Job Application Automation GUI — built with CustomTkinter.
+Resuto — desktop GUI built with CustomTkinter.
 
 CustomTkinter gives modern rounded widgets, proper dark theme,
 and clean typography with zero extra dependencies beyond pip.
@@ -45,44 +45,12 @@ from frontend.constants import (
 
 # Fonts are initialised inside App.__init__() after CTk root exists.
 
-# ── Regex patterns ────────────────────────────────────────────────
-_ERROR_RE = re.compile(
-    r"(Traceback|EOFError|KeyError|ValueError|TypeError|AttributeError|"
-    r"authentication_error|invalid.{0,20}key|"
-    r"\[ERR\].*(?:failed|crash|invalid)(?!.*:\s*0))",
-    re.IGNORECASE,
+# Regex patterns (_PHASE_MAP, _ERROR_RE, …) live in frontend/constants.py
+# so every view module can import them.
+from frontend.constants import (  # noqa: E402
+    _ERROR_RE, _PHASE_MAP, _DSQ_RE, _NF_RE, _APPLY_RE, _REAPPLY_RE,
+    _IDLE_RE, _LAST_JOB_RE, _ACTIVITY_PATTERNS,
 )
-_PHASE_MAP = [
-    (re.compile(r"Checking.*API|Checking your Claude"), "Verifying API key..."),
-    (re.compile(r"API key is valid"),                   "API key verified"),
-    (re.compile(r"Analysing your profile"),             "Analysing profile..."),
-    (re.compile(r"log in manually"),                    "Waiting: log in to LinkedIn"),
-    (re.compile(r"PHASE 1|Scanning jobs"),              "Phase 1 — Scanning jobs..."),
-    (re.compile(r"Phase 2.*Generating|Phase 2 --"),     "Phase 2 — Generating resumes..."),
-    (re.compile(r"Phase 2 complete"),                   "Resumes ready"),
-    (re.compile(r"Phase 3|guided apply"),               "Phase 3 — Guided applying..."),
-    # Phase 3 per-job patterns
-    (re.compile(r"\[WAIT\].*YOUR TURN|job is open in the browser"), "Phase 3 — Waiting for you..."),
-    (re.compile(r"\[OK\] Marked as applied"),           "Phase 3 — Applied ✓"),
-    (re.compile(r"\[SKIP\].*Marked as skipped"),        "Phase 3 — Skipped, next job..."),
-    (re.compile(r"\[BOT_IDLE\]"),                       "Run complete — browser open"),
-    (re.compile(r"Session complete|roles processed"),   "Run complete"),
-    (re.compile(r"Final Summary|Done!|done\."),         "Run complete"),
-]
-_DSQ_RE     = re.compile(r"d / s / q|d/s/q",          re.IGNORECASE)
-_NF_RE      = re.compile(r"n / f",                    re.IGNORECASE)
-_APPLY_RE   = re.compile(r"ready to start applying",  re.IGNORECASE)
-_REAPPLY_RE = re.compile(r"review them for re-application", re.IGNORECASE)
-_IDLE_RE     = re.compile(r"\[BOT_IDLE\]")
-_LAST_JOB_RE = re.compile(r"\[BOT_LAST_JOB\]")
-_ACTIVITY_PATTERNS = [
-    (re.compile(r"Scanning.*filtering.*['\"](.+?)['\"]", re.I), "role",    "Phase 1 — Scanning LinkedIn"),
-    (re.compile(r"^\*\s+(.+@.+)$"),                             "role",    "Checking relevance..."),
-    (re.compile(r"^\|\s+(.+@.+)$"),                             "role",    "Analysing match..."),
-    (re.compile(r"\[(\d+)/(\d+)\]\s+(.+@.+)$"),                "resume",  None),
-    (re.compile(r"\[OK\] Resume ready"),                        "action",  "Resume generated"),
-    (re.compile(r"Highlighting experience"),                    "action",  "Tailoring experience..."),
-]
 
 # ── DB helpers ─────────────────────────────────────────────────────
 def _db_path() -> str:
@@ -130,7 +98,8 @@ def _read_stats(since: str = None, recent_since: str = None) -> dict:
                 ") "
                 "ORDER BY logged_at DESC LIMIT 12")]
         return {"counts": counts, "avg": avg,
-                "jobs": jobs, "queued": counts.get("matched", 0)}
+                "jobs": jobs,
+                "queued": counts.get("matched", 0) + counts.get("resume_ready", 0)}
     except Exception:
         return {}
 
@@ -150,7 +119,7 @@ def _read_history(filt: str) -> list:
     if filt == "all":
         where = "WHERE 1=1" + _noise_filter
     elif filt == "stretch":
-        where = "WHERE status='matched' AND stretch=1"
+        where = "WHERE status IN ('matched','resume_ready') AND stretch=1"
     elif filt == "skipped":
         # Show all skips except pure noise (no title, no company)
         where = (
@@ -160,6 +129,9 @@ def _read_history(filt: str) -> list:
             "  notes NOT LIKE '%title not related%'"
             ")"
         )
+    elif filt == "matched":
+        # "Queued" tab: waiting for a resume OR resume ready to apply
+        where = "WHERE status IN ('matched','resume_ready')" + _noise_filter
     else:
         where = f"WHERE status='{filt}'" + _noise_filter
     try:
@@ -196,12 +168,18 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
         self._api_var       = ctk.StringVar(value=_load_api_key())
         self._api_save_pref = ctk.BooleanVar(value=bool(_load_api_key()))
 
-        # ── Access gate (IP-based registration / login) ─────────────
+        # ── Access gate (email + API key sign-in) ───────────────────
+        # Hide the (still empty) main window while the sign-in window is up
+        self.withdraw()
         self._access_granted = False
         self._gate_done      = tk.BooleanVar(value=False)
 
-        def _on_access_granted():
+        def _on_access_granted(api_key: str = ""):
             self._access_granted = True
+            # Use the key the user just signed in with — don't make them
+            # type it again in Settings
+            if api_key:
+                self._api_var.set(api_key)
             self._gate_done.set(True)
 
         run_access_gate(self, _on_access_granted)
@@ -210,6 +188,7 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
         if not self._access_granted:
             self.destroy()
             return
+        self.deiconify()
 
         self.title(APP_TITLE)
         self.geometry("920x640")
@@ -248,6 +227,14 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
         self._poll()
         self._sched_stats()
 
+        # Auto-update: check GitHub releases in the background. The result is
+        # handed to the Tk thread through the queue (see RunMixin._poll).
+        try:
+            from core.updater import check_in_background
+            check_in_background(lambda info: self._q.put(("update_found", info)))
+        except Exception:
+            pass
+
     # ── Build ─────────────────────────────────────────────────────
     def _build(self):
         self.grid_columnconfigure(1, weight=1)
@@ -268,7 +255,7 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
         top.grid(row=0, column=0, sticky="ew")
         ctk.CTkLabel(top, text="⚡", font=F("icon_lg"),
                      text_color=ACCENT).pack(pady=(20, 2))
-        ctk.CTkLabel(top, text="Bot", font=F("tiny"),
+        ctk.CTkLabel(top, text="Resuto", font=F("tiny"),
                      text_color=FG_DIM).pack()
         ctk.CTkFrame(top, height=1, fg_color=BG_HOVER
                      ).pack(fill="x", padx=8, pady=14)
@@ -288,6 +275,7 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
             # Bind ALL three widgets — frame, icon, AND label text
             for w in (f, icon_lbl, tip_lbl):
                 w.bind("<Button-1>", lambda e, i=idx: self._nav(i))
+            self._bind_nav_hover(f, (f, icon_lbl, tip_lbl))
             self._nav_btns.append((f, icon_lbl))
 
         # Spacer — pushes settings to bottom
@@ -309,7 +297,22 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
         stip.pack()
         for w in (sf, sico, stip):
             w.bind("<Button-1>", lambda e: self._nav(4))
+        self._bind_nav_hover(sf, (sf, sico, stip))
         self._nav_btns.append((sf, sico))   # index 4
+
+        # Keyboard access: Ctrl+1..5 switch tabs (Run, Errors, Stats,
+        # History, Settings) — the sidebar items are labels, not buttons
+        for i in range(5):
+            self.bind_all("<Control-Key-%d>" % (i + 1),
+                          lambda e, i=i: self._nav(i))
+
+    def _bind_nav_hover(self, frame, widgets):
+        """Subtle hover highlight so sidebar items read as clickable."""
+        def _on(_e):  frame.configure(fg_color=BG_HOVER)
+        def _off(_e): frame.configure(fg_color="transparent")
+        for w in widgets:
+            w.bind("<Enter>", _on, add="+")
+            w.bind("<Leave>", _off, add="+")
 
     def _content(self):
         """Main right-side area: header bar, tab frames, status bar."""
@@ -322,7 +325,7 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
         hdr = ctk.CTkFrame(cf, height=48, corner_radius=0, fg_color=BG_CARD)
         hdr.grid(row=0, column=0, sticky="ew")
         hdr.grid_propagate(False)
-        ctk.CTkLabel(hdr, text="Job Application Automation",
+        ctk.CTkLabel(hdr, text="Resuto",
                      font=F("heading"), text_color=FG).pack(side="left", padx=16)
         self._phase_lbl = ctk.CTkLabel(hdr, text="Ready",
                                         font=F("label"), text_color=FG_DIM)
@@ -408,7 +411,9 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
         self._err_cnt_lbl.configure(
             text=f"{self._err_count} issue{'s' if self._err_count!=1 else ''}",
             text_color=WARNING)
-        if self._err_count == 1:
+        # Only a real error (not a warning) may switch tabs, and never while
+        # the bot is running — the user may be watching the Run tab
+        if self._err_count == 1 and not warn and not self._live:
             self._nav(1)
 
     def _handle_done(self, code: int):
@@ -456,7 +461,7 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
         if not ok and self._err_count > 0:
             self._nav(1)   # errors tab — only if actual errors logged
         else:
-            self._nav(2)   # history tab
+            self._nav(3)   # history tab (index 3; 2 is Stats)
 
     # ── Helpers ────────────────────────────────────────────────────
     def _set_status(self, t: str):
@@ -467,6 +472,39 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
 
     # ── Settings tab ─────────────────────────────────────────────
     # Settings methods → views/settings_view.py
+
+    # ── Auto-update ───────────────────────────────────────────────
+    def _offer_update(self, info: dict):
+        if self._runner and self._runner.running():
+            return   # don't interrupt a live run; offered again next launch
+        notes = (info.get("release_notes") or "").strip()
+        msg = "Resuto %s is available (you have the older version).\n\n" % info["version"]
+        if notes:
+            msg += notes[:400] + "\n\n"
+        msg += "Download and install now? Resuto will restart."
+        if not messagebox.askyesno("Update available", msg):
+            return
+        self._set_status("Downloading update %s..." % info["version"])
+
+        def _work():
+            from core.updater import download_and_install
+            ok = download_and_install(
+                info["download_url"], info["version"],
+                progress_cb=lambda pct: self._q.put(("update_progress", pct)),
+                sha256_url=info.get("sha256_url"))
+            self._q.put(("update_done", ok))
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_update_done(self, ok: bool):
+        if ok:
+            self._set_status("Installing update — Resuto will restart...")
+            self.after(800, self._on_close)
+        else:
+            self._set_status("Update failed — see the log. You can keep using this version.")
+            messagebox.showwarning(
+                "Update failed",
+                "The update could not be downloaded or verified.\n"
+                "You can keep using this version and try again later.")
 
     def _on_close(self):
         """Clean shutdown: cancel timers, clear unsaved API key, close bot."""
@@ -489,17 +527,71 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
     # _open_review_window/_on_review_done → views/run_view.py
 
 
+def _install_browsers() -> int:
+    """Download Playwright Chromium with a small progress window."""
+    import subprocess as _sp
+    import threading as _th
+    result = {"code": 1, "error": ""}
+
+    def _run():
+        try:
+            from playwright._impl._driver import (compute_driver_executable,
+                                                  get_driver_env)
+            driver = compute_driver_executable()
+            cmd = list(driver) if isinstance(driver, (tuple, list)) else [str(driver)]
+            flags = _sp.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            r = _sp.run(cmd + ["install", "chromium"], env=get_driver_env(),
+                        capture_output=True, text=True, creationflags=flags)
+            result["code"] = r.returncode
+            if r.returncode != 0:
+                result["error"] = (r.stderr or r.stdout)[-600:]
+        except Exception as e:
+            result["error"] = str(e)
+
+    worker = _th.Thread(target=_run, daemon=True)
+    try:
+        import tkinter as _tk
+        from tkinter import ttk as _ttk, messagebox as _mb
+        root = _tk.Tk()
+        root.title("Resuto — Downloading browser")
+        root.geometry("420x120")
+        root.resizable(False, False)
+        _tk.Label(root, text="Downloading Chromium (about 150 MB).\n"
+                             "This can take a few minutes…").pack(pady=(16, 8))
+        bar = _ttk.Progressbar(root, mode="indeterminate", length=360)
+        bar.pack()
+        bar.start(12)
+
+        def _check():
+            if worker.is_alive():
+                root.after(300, _check)
+                return
+            root.destroy()
+            if result["code"] != 0:
+                _mb.showerror("Resuto", "Chromium download failed:\n\n"
+                              + (result["error"] or "unknown error")
+                              + "\n\nYou can retry later with: resuto.exe --install-browsers")
+        worker.start()
+        root.after(300, _check)
+        root.mainloop()
+    except Exception:
+        # No GUI available — run in the foreground
+        if not worker.is_alive():
+            worker.start()
+        worker.join()
+        print(result["error"] or "Chromium installed.", flush=True)
+    return result["code"]
+
+
 if __name__ == "__main__":
     # ── Bot mode — launched by the GUI as a subprocess ────────────
     # When running as a PyInstaller exe, the GUI spawns itself with
     # --bot-mode to run the orchestrator instead of opening another window.
     if "--install-browsers" in sys.argv:
-        # Install Playwright Chromium — called from installer or user
-        import subprocess as _sp
-        print("Installing Playwright Chromium browser...", flush=True)
-        r = _sp.run([sys.executable, "-m", "playwright", "install", "chromium"],
-                    capture_output=False)
-        sys.exit(r.returncode)
+        # Install Playwright's Chromium — called from the installer or by the user.
+        # A compiled exe can't run "python -m playwright", so call Playwright's
+        # bundled driver directly (that is what `playwright install` does).
+        sys.exit(_install_browsers())
 
     if "--bot-mode" in sys.argv:
         # Wrap EVERYTHING in try/except — no silent crash possible
@@ -512,29 +604,12 @@ if __name__ == "__main__":
             if _root not in sys.path:
                 sys.path.insert(0, _root)
 
-            def _getarg(flag, default=""):
-                try: return sys.argv[sys.argv.index(flag) + 1]
-                except (ValueError, IndexError): return default
-
             print("[BOT] Step 1: importing orchestrator...", flush=True)
-            from backend.orchestrator import main as _bot_main
-            print("[BOT] Step 2: importing settings...", flush=True)
-            from core.settings import get_settings as _gs2
-            print("[BOT] Step 3: building gui_args...", flush=True)
-
-            gui_args = type("A", (), {
-                "gui":              True,
-                "location":         _getarg("--location", ""),
-                "max_jobs":         int(_getarg("--max-jobs", "5") or "5"),
-                "mode":             _getarg("--mode", "easy_apply"),
-                "roles":            sys.argv[sys.argv.index("--roles") + 1:]
-                                    if "--roles" in sys.argv else [],
-                "clear_runs":       "--clear-runs" in sys.argv,
-                "application_mode": _gs2().get("application_mode", "continuous"),
-            })()
-
-            print("[BOT] Step 4: starting asyncio run...", flush=True)
-            asyncio.run(_bot_main(gui_args=gui_args))
+            from backend.orchestrator import run_from_argv as _bot_run
+            print("[BOT] Step 2: starting bot...", flush=True)
+            # Same argparse as source mode — every flag (filters, date,
+            # --application-mode, --phase2-only, --job-ids) now works in the exe
+            _bot_run(sys.argv[1:])
             print("[BOT] Done.", flush=True)
 
         except (KeyboardInterrupt, EOFError):

@@ -207,13 +207,16 @@ class HistoryMixin:
             return
 
         STATUS_ICON = {"applied":"\u2713","skipped":"\u2212",
-                       "failed":"\u2715","matched":"\u25b6"}
+                       "failed":"\u2715","matched":"\u25b6",
+                       "resume_ready":"\u25b6"}
         STATUS_COL  = {"applied":SUCCESS,"skipped":WARNING,
-                       "failed":DANGER,  "matched":ACCENT}
+                       "failed":DANGER,  "matched":ACCENT,
+                       "resume_ready":ACCENT}
         DECISION    = {"applied":"Applied","skipped":"Skipped",
-                       "failed":"Failed", "matched":"Queued"}
+                       "failed":"Failed", "matched":"Queued",
+                       "resume_ready":"Ready to apply"}
         def _h_badge(row):
-            if row.get("status") == "matched" and row.get("stretch"):
+            if row.get("status") in ("matched", "resume_ready") and row.get("stretch"):
                 return ("Stretch", STRETCH)
             st = row.get("status","")
             return (DECISION.get(st, st.capitalize()), STATUS_COL.get(st, MUTED))
@@ -314,13 +317,16 @@ class HistoryMixin:
         without any widget recreation.
         """
         STATUS_ICON = {"applied":"\u2713","skipped":"\u2212",
-                       "failed":"\u2715","matched":"\u25b6"}
+                       "failed":"\u2715","matched":"\u25b6",
+                       "resume_ready":"\u25b6"}
         STATUS_COL  = {"applied":SUCCESS,"skipped":WARNING,
-                       "failed":DANGER,  "matched":ACCENT}
+                       "failed":DANGER,  "matched":ACCENT,
+                       "resume_ready":ACCENT}
         DECISION    = {"applied":"Applied","skipped":"Skipped",
-                       "failed":"Failed", "matched":"Queued"}
+                       "failed":"Failed", "matched":"Queued",
+                       "resume_ready":"Ready to apply"}
         def _h_badge(row):
-            if row.get("status") == "matched" and row.get("stretch"):
+            if row.get("status") in ("matched", "resume_ready") and row.get("stretch"):
                 return ("Stretch", STRETCH)
             st = row.get("status","")
             return (DECISION.get(st, st.capitalize()), STATUS_COL.get(st, MUTED))

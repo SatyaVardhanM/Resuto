@@ -259,6 +259,7 @@ def cleanup_duplicate_rows() -> dict:
                     CASE status
                         WHEN 'applied' THEN 0
                         WHEN 'matched' THEN 1
+                        WHEN 'resume_ready' THEN 1
                         WHEN 'failed'  THEN 2
                         WHEN 'skipped' THEN 3
                         ELSE 4
@@ -293,6 +294,7 @@ def cleanup_duplicate_rows() -> dict:
                     CASE status
                         WHEN 'applied' THEN 0
                         WHEN 'matched' THEN 1
+                        WHEN 'resume_ready' THEN 1
                         WHEN 'failed'  THEN 2
                         WHEN 'skipped' THEN 3
                         ELSE 4
@@ -527,37 +529,6 @@ def count_applied_total() -> int:
         return row[0] if row else 0
     finally:
         conn.close()
-
-
-def load_applied_urls() -> set:
-    """
-    Returns the identity keys of jobs actually applied to
-    (status = 'applied').
-
-    As with load_seen_urls, each applied job contributes BOTH its
-    job_id and its job_url, so dedup is robust to LinkedIn's
-    changing URL tracking parameters.
-    """
-    applied = set()
-    if not os.path.exists(DB_FILE):
-        return applied
-    conn = _connect()
-    try:
-        rows = conn.execute(
-            f"SELECT job_url, job_id FROM {TABLE} WHERE status = ?",
-            ("applied",),
-        )
-        for row in rows:
-            url = (row["job_url"] or "").strip()
-            jid = (row["job_id"] or "").strip()
-            if url:
-                applied.add(url)
-            if jid:
-                applied.add(jid)
-    finally:
-        conn.close()
-    return applied
-
 
 
 def clear_all_history() -> int:
@@ -795,10 +766,13 @@ def save_matched_job(job: dict, relevance: dict, search_role: str = "",
 
 def load_applied_urls() -> set:
     """
-    Returns identity keys for ONLY confirmed applied jobs.
-    Used by orchestrator to permanently skip re-application.
-    Does NOT include skipped/pre-filtered — those are re-evaluated
-    each run via LinkedIn DOM scraping.
+    Returns identity keys (job_url AND job_id) of jobs the scanner should
+    never re-analyse: applied, resume_ready and matched.
+    matched / resume_ready jobs are already queued for Phase 2/3, so
+    sending them to Claude again would only waste API calls.
+    Skipped / pre-filtered jobs are NOT included — they are re-evaluated
+    each run.
+    (An older, unused duplicate of this function was removed.)
     """
     seen = set()
     if not os.path.exists(DB_FILE):
@@ -876,7 +850,7 @@ def save_scanning_job(job: dict) -> int:
     try:
         conn = _connect()
     except Exception as e:
-        _log("save_scanning_job: DB connect failed: %s" % e)
+        log_error("save_scanning_job: DB connect failed: %s" % e)
         return -1
     try:
         url    = job.get("url", "").strip()
@@ -920,7 +894,7 @@ def save_scanning_job(job: dict) -> int:
             (url,)).fetchone()
         return row["id"] if row else -1
     except Exception as e:
-        _log("save_scanning_job error: %s" % e)
+        log_error("save_scanning_job error: %s" % e)
         try: conn.close()
         except Exception: pass
         return -1
@@ -973,7 +947,8 @@ def mark_resume_ready(row_id: int, docx_path: str, pdf_path: str) -> None:
     try:
         conn.execute(
             f"""UPDATE {TABLE}
-                SET resume_ready = 1, docx_path = ?, pdf_path = ?
+                SET resume_ready = 1, status = 'resume_ready',
+                    docx_path = ?, pdf_path = ?
                 WHERE id = ?""",
             (docx_path, pdf_path, row_id),
         )
@@ -997,7 +972,8 @@ def get_jobs_ready_to_apply() -> list:
                        match_score, skill_overlap, ai_reason,
                        matched_skills, missing_skills
                 FROM {TABLE}
-                WHERE status = 'matched' AND resume_ready = 1"""
+                WHERE status IN ('matched', 'resume_ready')
+                  AND resume_ready = 1"""
         ).fetchall()
         return [dict(r) for r in rows]
     finally:
@@ -1084,11 +1060,14 @@ def clear_unfinished_run() -> dict:
     conn = _connect()
     try:
         # 1. Collect the matched rows and their file paths
+        # Only clear jobs that were SCANNED but never had a resume generated
+        # Jobs with resume_ready=1 (status='resume_ready') are kept — user may want them
         rows = conn.execute(
-            f"SELECT docx_path, pdf_path FROM {TABLE} WHERE status = 'matched'"
+            f"""SELECT docx_path, pdf_path FROM {TABLE}
+                WHERE status = 'matched' AND (resume_ready IS NULL OR resume_ready = 0)"""
         ).fetchall()
 
-        # 2. Delete the resume files FIRST
+        # 2. Delete the resume files FIRST (shouldn't be any since resume_ready=0)
         files_removed = 0
         for r in rows:
             for path in (r["docx_path"], r["pdf_path"]):
@@ -1100,8 +1079,11 @@ def clear_unfinished_run() -> dict:
                     except Exception as e:
                         print(f"   [WARN]  Could not delete {path}: {e}")
 
-        # 3. Now delete the database rows
-        cur = conn.execute(f"DELETE FROM {TABLE} WHERE status = 'matched'")
+        # 3. Now delete only unprocessed matched rows
+        cur = conn.execute(
+            f"""DELETE FROM {TABLE}
+                WHERE status = 'matched'
+                AND (resume_ready IS NULL OR resume_ready = 0)""")
         rows_removed = cur.rowcount
         conn.commit()
     finally:
@@ -1109,6 +1091,53 @@ def clear_unfinished_run() -> dict:
 
     return {"rows": rows_removed, "files": files_removed}
 
+
+
+
+def save_externally_applied_job(job: dict, search_role: str = "") -> None:
+    """
+    Insert a job the user already applied to on LinkedIn (detected via DOM).
+    Inserts directly as status='applied' — never touches Queued/Matched count.
+    Safe to call even if the URL already exists in the DB.
+    """
+    if not os.path.exists(DB_FILE):
+        return
+
+    url   = job.get("url") or job.get("job_url", "")
+    if not url:
+        return
+
+    conn = _connect()
+    try:
+        # Skip if already tracked in any state
+        existing = conn.execute(
+            f"SELECT id FROM {TABLE} WHERE job_url = ? LIMIT 1", (url,)
+        ).fetchone()
+        if existing:
+            return
+
+        import time as _time
+        now = _time.strftime("%Y-%m-%d %H:%M:%S")
+        conn.execute(
+            f"""INSERT INTO {TABLE}
+                (job_title, company, location, job_url,
+                 status, match_score, ai_reason,
+                 search_role, logged_at)
+                VALUES (?, ?, ?, ?, 'applied', 100,
+                        'Already applied on LinkedIn (detected via DOM)',
+                        ?, ?)""",
+            (
+                job.get("title", ""),
+                job.get("company", ""),
+                job.get("location", ""),
+                url,
+                search_role,
+                now,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 def has_unfinished_run() -> int:
     """
@@ -1121,7 +1150,9 @@ def has_unfinished_run() -> int:
     conn = _connect()
     try:
         row = conn.execute(
-            f"SELECT COUNT(*) AS n FROM {TABLE} WHERE status = 'matched'"
+            f"""SELECT COUNT(*) AS n FROM {TABLE}
+                WHERE status = 'matched'
+                AND (resume_ready IS NULL OR resume_ready = 0)"""
         ).fetchone()
         return row["n"] if row else 0
     finally:

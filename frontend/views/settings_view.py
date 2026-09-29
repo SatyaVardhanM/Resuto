@@ -22,7 +22,7 @@ from frontend.constants import (
     BG, BG_CARD, BG_FIELD, BG_HOVER,
     ACCENT, ACCENT_HV, DANGER, SUCCESS, WARNING, MUTED,
     FG, FG_SOFT, FG_DIM,
-    F, _FONT_FAMILY, _FONTS, _BASE_SIZE,
+    F, _FONT_FAMILY, _FONTS, base_size,
     _init_fonts, _load_font_pref,
     _settings_file, _load_api_key, _save_api_key, _clear_api_key,
     _load_settings, _save_settings, _save_font_pref,
@@ -215,17 +215,19 @@ class SettingsMixin:
         browser_card.grid_columnconfigure(0, weight=1)
 
         # ── Init vars FIRST before any widget references them ─────
+        def _default_chrome_path() -> str:
+            import os as _o
+            from core.settings import _resuto_documents_dir
+            return _o.path.join(_resuto_documents_dir(), "BotChromeProfile")
+
         stored_chrome = self._load_chrome_profile_path()
+        # A stored value equal to the default counts as "use default"
+        if stored_chrome and os.path.normcase(stored_chrome) == \
+                os.path.normcase(_default_chrome_path()):
+            stored_chrome = ""
         self._chrome_default_var = ctk.BooleanVar(
             value=(stored_chrome == ""))
         self._chrome_path_var = ctk.StringVar()
-
-        def _default_chrome_path() -> str:
-            import sys as _s, os as _o
-            if getattr(_s, "frozen", False):
-                return _o.path.join(_o.path.dirname(_s.executable),
-                                    "BotChromeProfile")
-            return str(Path(__file__).parent.parent / "BotChromeProfile")
 
         self._chrome_path_var.set(
             stored_chrome if stored_chrome else _default_chrome_path())
@@ -461,7 +463,7 @@ class SettingsMixin:
         self._font_slider = ctk.CTkSlider(
             size_card, from_=8, to=18, number_of_steps=10,
             command=self._on_font_slider)
-        self._font_slider.set(_BASE_SIZE)
+        self._font_slider.set(base_size())
         self._font_slider.grid(row=1, column=1, sticky="ew",
                                 padx=6, pady=(0, 14))
         ctk.CTkButton(size_card, text="A+", width=42, height=36,
@@ -469,7 +471,7 @@ class SettingsMixin:
                       hover_color=BG_HOVER, text_color=FG,
                       command=lambda: self._change_font_size(+1)
                       ).grid(row=1, column=2, padx=(6, 18), pady=(0, 14))
-        self._font_preview_var = ctk.StringVar(value=f"Current: {_BASE_SIZE}pt")
+        self._font_preview_var = ctk.StringVar(value=f"Current: {base_size()}pt")
         ctk.CTkLabel(size_card, textvariable=self._font_preview_var,
                      font=F("small"), text_color=MUTED
                      ).grid(row=2, column=0, columnspan=3, pady=(0, 8))
@@ -511,12 +513,9 @@ class SettingsMixin:
         # Fall back to instance vars if not passed
         row   = path_row   or getattr(self, "_chrome_path_row",   None)
         if not default_path:
-            import sys as _s, os as _o
-            default_path = (
-                _o.path.join(_o.path.dirname(_s.executable), "BotChromeProfile")
-                if getattr(_s, "frozen", False)
-                else str(Path(__file__).parent.parent / "BotChromeProfile")
-            )
+            import os as _o
+            from core.settings import _resuto_documents_dir
+            default_path = _o.path.join(_resuto_documents_dir(), "BotChromeProfile")
         if use_default:
             if row:
                 row.grid_remove()
@@ -601,13 +600,12 @@ class SettingsMixin:
             if xml_path and os.path.exists(xml_path):
                 ET.register_namespace("", "")
                 from api.intake import safe_parse_xml_file as _safe_parse
-                root_el = _safe_parse(xml_path)
-                tree    = type("T",(),{"getroot": lambda s: root_el})()
-                root = tree.getroot()
+                root = _safe_parse(xml_path)
+                tree = ET.ElementTree(root)   # real tree — the old stub had no write()
                 meta = root.find("meta")
                 if meta is None:
-                    meta = ET.SubElement(root, "meta")
-                    root.insert(0, meta)   # meta goes first
+                    meta = ET.Element("meta")
+                    root.insert(0, meta)   # meta goes first (inserted once)
                 wa = meta.find("work_authorization")
                 if wa is None:
                     wa = ET.SubElement(meta, "work_authorization")
@@ -859,8 +857,11 @@ class SettingsMixin:
                 state="normal", text="⬇  Download Resume"))
 
         except Exception as e:
+            # Bind the message now — Python deletes `e` when the except
+            # block ends, so a lambda referring to it would crash later.
+            err_msg = str(e)[:120]
             self.after(0, lambda: messagebox.showerror(
-                "Error", f"Could not generate resume:\n{str(e)[:120]}"))
+                "Error", f"Could not generate resume:\n{err_msg}"))
             self.after(0, lambda: self._download_resume_btn.configure(
                 state="normal", text="⬇  Download Resume"))
 
@@ -927,7 +928,9 @@ class SettingsMixin:
 
     def _change_font_size(self, delta: int):
         """Called by A+ / A− buttons."""
-        new_size = max(8, min(18, _BASE_SIZE + delta))
+        # base_size() reads the live value; the old `_BASE_SIZE` import was a
+        # copy frozen at 14, so A+/A− could only ever reach 13 or 15
+        new_size = max(8, min(18, base_size() + delta))   # slider range 8–18
         self._apply_font_size(new_size)
         self._font_slider.set(new_size)
 

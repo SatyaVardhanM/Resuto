@@ -8,7 +8,6 @@ pillow==12.1.1
 
 # Browser automation
 playwright==1.58.0
-beautifulsoup4==4.14.3
 
 # Google Sheets / License
 gspread==6.2.1
@@ -26,10 +25,5 @@ docx2pdf==0.1.8
 pypdf==6.12.2
 lxml==6.0.2
 
-# Data
-pandas==3.0.1
-numpy==2.4.3
-
-# Utilities
+# Utilities (httpx is used by the anthropic SDK)
 httpx==0.28.1
-tqdm==4.67.3

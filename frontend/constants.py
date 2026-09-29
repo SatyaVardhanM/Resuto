@@ -8,6 +8,8 @@ import sys
 import json
 from pathlib import Path
 
+import re
+
 import customtkinter as ctk
 import platform as _platform
 
@@ -15,27 +17,12 @@ import platform as _platform
 APP_TITLE  = "Resuto"
 def _get_bot_script() -> Path:
     """
-    Return the path to orchestrator.py.
-    Works both from source and inside a PyInstaller bundle.
+    Path to backend/orchestrator.py when running from source.
+    In the compiled exe the .py files don't exist on disk, so BotRunner
+    falls back to spawning the exe itself with --bot-mode.
     """
-    if getattr(sys, "frozen", False):
-        base = Path(sys.executable).parent
-    else:
-        base = Path(sys.executable).parent
-
-    p = base / "backend" / "orchestrator.py"
-
-    # Fallback: try common alternative locations
-    if not p.exists():
-        for alt in [
-            base / "main.py",
-            base / "orchestrator.py",
-            Path(sys.executable).parent / "orchestrator.py",
-        ]:
-            if alt.exists():
-                return alt
-
-    return p
+    project_root = Path(__file__).resolve().parent.parent
+    return project_root / "backend" / "orchestrator.py"
 
 BOT_SCRIPT = _get_bot_script()
 
@@ -56,61 +43,45 @@ FG_SOFT   = "#C8CBD2"
 FG_DIM    = "#8B8FA8"
 
 
+# ── Settings (single file: Documents\Resuto\local_settings.json) ──
+# All reads/writes go through core.settings so the frontend, backend and
+# core modules never disagree about where settings live.
+
 def _settings_file() -> Path:
-    """Return local_settings.json path — works both from source and exe."""
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent / "local_settings.json"
-    return Path(sys.executable).parent / "local_settings.json"  # frozen/source
+    from core.settings import _settings_file as _sf
+    return Path(_sf())
 
 def _load_settings() -> dict:
-    """Load full local_settings.json."""
     try:
-        p = Path(sys.executable).parent / "local_settings.json"
-        if p.exists():
-            import json as _j
-            return _j.loads(p.read_text(encoding="utf-8"))
+        from core.settings import load_all
+        return load_all()
     except Exception:
-        pass
-    return {}
+        return {}
 
 def _save_settings(data: dict) -> None:
-    """Save full local_settings.json."""
     try:
-        p = Path(sys.executable).parent / "local_settings.json"
-        import json as _j
-        p.write_text(_j.dumps(data, indent=2), encoding="utf-8")
+        from core.settings import _save
+        _save(data)
     except Exception:
         pass
 
 def _load_api_key() -> str:
-    """Load saved API key from local_settings.json."""
-    try:
-        p = _settings_file()
-        if p.exists():
-            d = json.loads(p.read_text(encoding="utf-8"))
-            return d.get("api_key", "")
-    except Exception:
-        pass
-    return ""
+    """Load saved API key."""
+    return str(_load_settings().get("api_key", "") or "")
 
 def _save_api_key(key: str) -> None:
-    """Persist API key to local_settings.json."""
+    """Persist API key (only called when 'Remember API key' is on)."""
     try:
-        p = _settings_file()
-        d = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
-        d["api_key"] = key
-        p.write_text(json.dumps(d, indent=2), encoding="utf-8")
+        from core.settings import update
+        update(api_key=key)
     except Exception:
         pass
 
 def _clear_api_key() -> None:
-    """Remove API key from local_settings.json."""
+    """Remove API key from settings."""
     try:
-        p = _settings_file()
-        if p.exists():
-            d = json.loads(p.read_text(encoding="utf-8"))
-            d.pop("api_key", None)
-            p.write_text(json.dumps(d, indent=2), encoding="utf-8")
+        from core.settings import update
+        update(api_key=None)
     except Exception:
         pass
 
@@ -186,24 +157,62 @@ def F(name: str):
     return _fallback.get(name, (_FONT_FAMILY, 11))
 
 def _load_font_pref() -> int:
-    """Read saved base font size from local_settings.json."""
+    """Read saved base font size."""
     try:
-        p = _settings_file()
-        if p.exists():
-            d = json.loads(p.read_text(encoding="utf-8"))
-            return int(d.get("font_size", 14))
+        return int(_load_settings().get("font_size", 14))
     except Exception:
-        pass
-    return 14
+        return 14
 
 
 def _save_font_pref(size: int) -> None:
-    """Persist base font size to local_settings.json."""
-    import json
+    """Persist base font size."""
     try:
-        p = _settings_file()
-        d = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
-        d["font_size"] = size
-        p.write_text(json.dumps(d, indent=2), encoding="utf-8")
+        from core.settings import update
+        update(font_size=int(size))
     except Exception:
         pass
+
+
+def base_size() -> int:
+    """Current base font size (read live — don't import _BASE_SIZE by value)."""
+    return _BASE_SIZE
+
+
+# ── Regex patterns ────────────────────────────────────────────────
+_ERROR_RE = re.compile(
+    r"(Traceback|EOFError|KeyError|ValueError|TypeError|AttributeError|"
+    r"authentication_error|invalid.{0,20}key|"
+    r"\[ERR\].*(?:failed|crash|invalid)(?!.*:\s*0))",
+    re.IGNORECASE,
+)
+_PHASE_MAP = [
+    (re.compile(r"Checking.*API|Checking your Claude"), "Verifying API key..."),
+    (re.compile(r"API key is valid"),                   "API key verified"),
+    (re.compile(r"Analysing your profile"),             "Analysing profile..."),
+    (re.compile(r"log in manually"),                    "Waiting: log in to LinkedIn"),
+    (re.compile(r"PHASE 1|Scanning jobs"),              "Phase 1 — Scanning jobs..."),
+    (re.compile(r"Phase 2.*Generating|Phase 2 --"),     "Phase 2 — Generating resumes..."),
+    (re.compile(r"Phase 2 complete"),                   "Resumes ready"),
+    (re.compile(r"Phase 3|guided apply"),               "Phase 3 — Guided applying..."),
+    # Phase 3 per-job patterns
+    (re.compile(r"\[WAIT\].*YOUR TURN|job is open in the browser"), "Phase 3 — Waiting for you..."),
+    (re.compile(r"\[OK\] Marked as applied"),           "Phase 3 — Applied ✓"),
+    (re.compile(r"\[SKIP\].*Marked as skipped"),        "Phase 3 — Skipped, next job..."),
+    (re.compile(r"\[BOT_IDLE\]"),                       "Run complete — browser open"),
+    (re.compile(r"Session complete|roles processed"),   "Run complete"),
+    (re.compile(r"Final Summary|Done!|done\."),         "Run complete"),
+]
+_DSQ_RE     = re.compile(r"d / s / q|d/s/q",          re.IGNORECASE)
+_NF_RE      = re.compile(r"n / f",                    re.IGNORECASE)
+_APPLY_RE   = re.compile(r"ready to start applying",  re.IGNORECASE)
+_REAPPLY_RE = re.compile(r"review them for re-application", re.IGNORECASE)
+_IDLE_RE     = re.compile(r"\[BOT_IDLE\]")
+_LAST_JOB_RE = re.compile(r"\[BOT_LAST_JOB\]")
+_ACTIVITY_PATTERNS = [
+    (re.compile(r"Scanning.*filtering.*['\"](.+?)['\"]", re.I), "role",    "Phase 1 — Scanning LinkedIn"),
+    (re.compile(r"^\*\s+(.+@.+)$"),                             "role",    "Checking relevance..."),
+    (re.compile(r"^\|\s+(.+@.+)$"),                             "role",    "Analysing match..."),
+    (re.compile(r"\[(\d+)/(\d+)\]\s+(.+@.+)$"),                "resume",  None),
+    (re.compile(r"\[OK\] Resume ready"),                        "action",  "Resume generated"),
+    (re.compile(r"Highlighting experience"),                    "action",  "Tailoring experience..."),
+]
