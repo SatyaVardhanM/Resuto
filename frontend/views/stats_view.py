@@ -131,7 +131,12 @@ class StatsMixin:
         start = -90.0
         for n, col in [(applied, SUCCESS),(skipped, WARNING),(failed, DANGER)]:
             ext = n / total * 360
-            if ext > 0.5:
+            if ext >= 359.5:
+                # Tk draws NOTHING for a 360° arc — the ring vanished when
+                # every job had the same status (e.g. all skipped)
+                cv.create_oval(cx-ro, cy-ro, cx+ro, cy+ro,
+                               fill=col, outline=BG, width=3, tags="arc")
+            elif ext > 0.5:
                 cv.create_arc(cx-ro, cy-ro, cx+ro, cy+ro,
                               start=start, extent=ext,
                               fill=col, outline=BG, width=3, tags="arc")
@@ -143,7 +148,7 @@ class StatsMixin:
                        fill=BG, outline=BG, tags="hole")
         cv.create_text(cx, cy-8, text=str(applied+skipped+failed),
                        fill=FG, font=F("heading"), tags="txt")
-        cv.create_text(cx, cy+9, text="done",
+        cv.create_text(cx, cy+9, text="checked",
                        fill=MUTED, font=F("tiny"), tags="txt")
 
         # Legend labels below donut
@@ -220,7 +225,9 @@ class StatsMixin:
             self._rebuild_job_rows = False
 
         for row_i, job in enumerate(jobs):
-            score    = job.get("match_score") or 0
+            raw_score = job.get("match_score")
+            score    = raw_score or 0
+            score_txt = "—" if raw_score is None else f"{raw_score}%"
             status   = job.get("status", "")
             title    = job.get("job_title") or "Unknown"
             company  = job.get("company") or ""
@@ -235,21 +242,34 @@ class StatsMixin:
             icon     = STATUS_ICON.get(status, "•")
             sk_txt   = f"  |  Overlap: {overlap}%" if overlap else ""
 
-            # If rows already exist, update StringVars in-place (no widget create)
+            # If rows already exist, update them in-place (no widget create).
+            # Rows are reused by POSITION, so every colour and the expanded
+            # state must be reset too — previously only the text changed and
+            # rows kept the previous job's colours.
             if not self._rebuild_job_rows and row_i < len(self._job_svars):
                 sv = self._job_svars[row_i]
+                b_txt, b_col = _badge(job, status, decision, s_col)
                 sv["icon"].set(icon)
                 sv["title"].set(title)
                 sv["meta"].set(f"{company}  •  {when}" if company else when)
-                sv["score"].set(f"{score}%" if score else "")
+                sv["score"].set(score_txt)
                 sv["reason"].set(reason)
-                sv["badge"].set(f"  {decision}  ")
-                sv["match"].set(f"  Match {score}%{sk_txt}")
-                # Update bar color and width
+                sv["badge"].set(b_txt)
+                sv["match"].set(f"  Match {score_txt}{sk_txt}")
                 try:
-                    new_bar_col = SUCCESS if score >= 70 else WARNING if score >= 45 else DANGER
-                    new_fill_w  = max(2, int(score / 100 * 80))
-                    sv["bar_fill"].configure(width=new_fill_w, fg_color=new_bar_col)
+                    sv["icon_lbl"].configure(text_color=s_col)
+                    sv["score_lbl"].configure(text_color=bar_col)
+                    sv["badge_lbl"].configure(fg_color=b_col)
+                    sv["bar_fill"].configure(width=max(2, int(score / 100 * 80)),
+                                             fg_color=bar_col)
+                    key = (title, company, when)
+                    if sv.get("key") != key:
+                        sv["key"] = key
+                        if sv["det"].winfo_ismapped():
+                            sv["det"].grid_remove()
+                            sv["chev"].set("▾")
+                            if self._job_expanded is sv["det"]:
+                                self._job_expanded = None
                 except Exception:
                     pass
                 continue   # skip widget creation below
@@ -265,8 +285,9 @@ class StatsMixin:
             summ.grid_columnconfigure(1, weight=1)
 
             _sv_icon = ctk.StringVar(value=icon)
-            ctk.CTkLabel(summ, textvariable=_sv_icon, font=F("body_b"),
-                         text_color=s_col, width=20).grid(row=0,column=0,rowspan=2)
+            _icon_lbl = ctk.CTkLabel(summ, textvariable=_sv_icon, font=F("body_b"),
+                                     text_color=s_col, width=20)
+            _icon_lbl.grid(row=0,column=0,rowspan=2)
             info = ctk.CTkFrame(summ, fg_color="transparent")
             info.grid(row=0, column=1, sticky="ew", padx=(8,0))
             info.grid_columnconfigure(0, weight=1)
@@ -280,10 +301,10 @@ class StatsMixin:
 
             rgt = ctk.CTkFrame(summ, fg_color="transparent")
             rgt.grid(row=0, column=2, rowspan=2, padx=(8,0))
-            _sv_score = ctk.StringVar(value=f"{score}%" if score else "")
-            _sv_score = ctk.StringVar(value=f"{score}%" if score else "")
-            ctk.CTkLabel(rgt, textvariable=_sv_score, font=F("label_b"),
-                         text_color=bar_col).pack(anchor="e")
+            _sv_score = ctk.StringVar(value=score_txt)
+            _score_lbl = ctk.CTkLabel(rgt, textvariable=_sv_score, font=F("label_b"),
+                                      text_color=bar_col)
+            _score_lbl.pack(anchor="e")
             bar_bg = ctk.CTkFrame(rgt, width=80, height=5,
                                    fg_color=BG_FIELD, corner_radius=2)
             bar_bg.pack(pady=(3,0)); bar_bg.pack_propagate(False)
@@ -312,24 +333,32 @@ class StatsMixin:
             _badge_txt, _badge_col = _badge(job, status, decision, s_col)
             _sv_badge  = ctk.StringVar(value=_badge_txt)
             _sv_badge_col = _badge_col
-            _sv_match  = ctk.StringVar(value=f"  Match {score}%{sk_txt}")
+            _sv_match  = ctk.StringVar(value=f"  Match {score_txt}{sk_txt}")
             _sv_reason = ctk.StringVar(value=reason)
-            ctk.CTkLabel(badge_row, textvariable=_sv_badge,
-                         fg_color=_sv_badge_col, corner_radius=4,
-                         font=F("small_b"), text_color=BG).pack(side="left")
+            _badge_lbl = ctk.CTkLabel(badge_row, textvariable=_sv_badge,
+                                      fg_color=_sv_badge_col, corner_radius=4,
+                                      font=F("small_b"), text_color=BG)
+            _badge_lbl.pack(side="left")
             ctk.CTkLabel(badge_row, textvariable=_sv_match,
                          font=F("small"), text_color=FG_DIM).pack(side="left")
-            ctk.CTkLabel(det_inner, textvariable=_sv_reason,
-                         font=F("small"), text_color=FG_SOFT,
-                         wraplength=380, justify="left", anchor="w"
-                         ).pack(anchor="w")
-            # Register StringVars for in-place updates
+            _reason_lbl = ctk.CTkLabel(det_inner, textvariable=_sv_reason,
+                                       font=F("small"), text_color=FG_SOFT,
+                                       wraplength=380, justify="left", anchor="w")
+            _reason_lbl.pack(anchor="w", fill="x")
+            # Wrap the reason to the card's real width (was fixed at 380px)
+            det_inner.bind("<Configure>",
+                           lambda e, l=_reason_lbl: l.configure(
+                               wraplength=max(200, e.width - 16)), add="+")
+            # Register StringVars + widgets for in-place updates
             self._job_svars.append({
                 "icon":     _sv_icon,   "title":    _sv_title,
                 "meta":     _sv_meta,   "score":     _sv_score,
                 "badge":    _sv_badge,  "match":     _sv_match,
                 "reason":   _sv_reason, "bar_fill":  _bar_fill,
                 "bar_bg":   bar_bg,
+                "icon_lbl": _icon_lbl,  "score_lbl": _score_lbl,
+                "badge_lbl": _badge_lbl, "det":      det,
+                "chev":     chev_var,   "key":       (title, company, when),
             })
 
             def _toggle(ev=None, o=outer, d=det, cv=chev_var):

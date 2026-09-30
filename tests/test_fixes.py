@@ -264,7 +264,7 @@ def test_continuous_mode_apply_skip_loop(monkeypatch):
                                                                "match_score": 90},
                            print_relevance_report=lambda *a, **k: None),
         "api.resume_gen": dict(batch_generate_resumes=lambda *a, **k: {}),
-        "backend.browser": dict(guided_apply_session=None),
+        "backend.browser": dict(apply_to_job=None),   # replaced below
     }
     for name, attrs in stubs.items():
         m = types.ModuleType(name)
@@ -284,10 +284,11 @@ def test_continuous_mode_apply_skip_loop(monkeypatch):
                         lambda rid, st: calls["skipped"].append((rid, st)))
     monkeypatch.setattr(o, "extract_jd_metadata", lambda *a, **k: {"skills": []})
 
-    def fake_wait(job, loop):
+    async def fake_apply(context, job, idx, total):
         calls["waits"] += 1
-        return o.BOT_RESPONSE_SKIP
-    monkeypatch.setattr(o, "_wait_for_user_action", fake_wait)
+        calls["skipped"].append((job["id"], "skipped"))
+        return "skipped"
+    sys.modules["backend.browser"].apply_to_job = fake_apply
 
     total = asyncio.run(o.run_applications(
         None, None, None, "QA Engineer", "Remote", 5, False, 0,
@@ -295,3 +296,4 @@ def test_continuous_mode_apply_skip_loop(monkeypatch):
         application_mode="continuous"))
     assert total == 0
     assert calls["waits"] == 1 and calls["skipped"] == [(1, "skipped")]
+    assert o._STATE["stop"] is False

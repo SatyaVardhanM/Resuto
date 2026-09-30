@@ -634,6 +634,64 @@ async def _ask_user_choice(prompt: str, valid: tuple) -> str:
             return answer
         print(f"   [WARN]  Please type one of: {', '.join(valid)}")
 
+async def apply_to_job(context, job: dict, index: int = 1, total: int = 1) -> str:
+    """
+    Phase 3, ONE question per job:
+      1. open the job page in the bot's browser,
+      2. tell the GUI (BOT_APPLY line) so it shows one card with
+         Applied / Skip / Stop, the match score and the resume file,
+      3. wait for the answer and record it in the database.
+
+    Returns "applied", "skipped" or "stop".
+    """
+    import json as _json
+    from db import tracker
+
+    title   = job.get("job_title") or job.get("title") or "Unknown role"
+    company = job.get("company") or "Unknown company"
+    url     = job.get("job_url") or job.get("url") or ""
+    resume  = job.get("pdf_path") or job.get("docx_path") or ""
+    score   = job.get("match_score") or 0
+
+    opened = False
+    if url:
+        try:
+            page = await _setup_page(context)
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            opened = True
+        except Exception as e:
+            err = str(e).lower()
+            if any(x in err for x in ("target closed", "browser has been closed",
+                                       "context was destroyed", "connection closed")):
+                print("   [OK] Browser was closed -- stopping.", flush=True)
+                return "stop"
+            print(f"   [WARN]  Could not open the job page: {e}", flush=True)
+
+    print("BOT_APPLY: " + _json.dumps({
+        "title": title, "company": company, "url": url, "score": score,
+        "resume": resume, "index": index, "total": total, "opened": opened,
+    }), flush=True)
+    log("Waiting for user: %s @ %s (%d/%d)" % (title, company, index, total))
+
+    # "stop" first: on EOF (GUI closed) _ask_user_choice returns valid[0]
+    choice = await _ask_user_choice(
+        "   [WAIT] Apply in the browser, then choose Applied / Skip / Stop:",
+        ("stop", "applied", "skip", "d", "done", "s", "q", "quit"))
+
+    if choice in ("applied", "d", "done"):
+        tracker.mark_job_outcome(job["id"], "applied")
+        log("Applied: %s @ %s" % (title, company))
+        print("   [OK] Marked as applied.", flush=True)
+        return "applied"
+    if choice in ("skip", "s"):
+        tracker.mark_job_outcome(job["id"], "skipped")
+        log("Skipped: %s @ %s" % (title, company))
+        print("   [SKIP]  Marked as skipped.", flush=True)
+        return "skipped"
+    print("   [STOP] Stopped by you -- remaining jobs stay queued.", flush=True)
+    return "stop"
+
+
 async def minimize_browser(context) -> None:
     """
     Minimize the browser window via CDP instead of closing it.

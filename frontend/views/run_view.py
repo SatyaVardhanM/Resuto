@@ -985,156 +985,89 @@ class RunMixin:
     def _on_bot_done(self, code: int):
         self._q.put(("done", code))
 
-    def _show_one_by_one_action(self, line: str):
-        """
-        Parse BOT_WAITING line and show Applied/Skip action panel.
-        Line format: "BOT_WAITING: title | company | url | score"
-        """
-        try:
-            payload = line.replace("BOT_WAITING:", "").strip()
-            parts   = [p.strip() for p in payload.split("|")]
-            title   = parts[0] if len(parts) > 0 else "Unknown"
-            company = parts[1] if len(parts) > 1 else "Unknown"
-            url     = parts[2] if len(parts) > 2 else ""
-            score   = parts[3] if len(parts) > 3 else "?"
-        except Exception:
-            title = line; company = ""; url = ""; score = "?"
+    # ── Phase 3: one card per job (Applied / Skip / Stop) ─────────
+    # The bot opens the job page, then prints "BOT_APPLY: {json}".
+    # Uses the run tab's _action_bar + attention card (same widgets as the
+    # d/s/q prompt in history_view). The answers match what
+    # backend.browser.apply_to_job accepts: "applied" / "skip" / "stop".
+    def _show_apply_card(self, data: dict):
+        title   = str(data.get("title") or "Unknown role")
+        company = str(data.get("company") or "")
+        score   = data.get("score") or 0
+        idx     = int(data.get("index") or 1)
+        total   = int(data.get("total") or 1)
+        resume  = str(data.get("resume") or "")
+        url     = str(data.get("url") or "")
+        opened  = bool(data.get("opened"))
 
-        # Show in action panel (runs on main thread via after())
-        self.after(0, lambda: self._show_action_panel(title, company, url, score))
+        self._current_phase = 3
+        self._set_phase("Phase 3 — Job %d of %d" % (idx, total))
+        self._run_phase_lbl.configure(text="Your turn — apply in the browser")
+        self._run_sub_lbl.configure(text="Job %d of %d" % (idx, total))
 
-    def _show_action_bar(self, mode: str):
-        """
-        Legacy action bar for D/S/Q prompts during apply phase.
-        mode: "dsq" | "nf" | "yn_apply"
-        """
-        self._hide_action_panel()
-        panel = ctk.CTkFrame(self._run_frame, fg_color=BG_CARD,
-                              corner_radius=10, border_width=1,
-                              border_color=WARNING)
-        panel.pack(fill="x", padx=16, pady=(0,8), before=self._run_log)
-        self._action_panel = panel
+        head = "%s @ %s" % (title, company) if company else title
+        sub  = "Match %s%%   •   Job %d of %d" % (score, idx, total)
+        if resume:
+            sub += "\nResume: %s" % os.path.basename(resume)
+        sub += ("\n\nThe job is open in the bot's browser. Apply there, then choose below."
+                if opened else
+                "\n\nCouldn't open the job page automatically — use \"Open job link\".")
+        self._attention_hl.configure(text=head)
+        self._attention_sub.configure(text=sub, justify="center")
+        self._attention_card.place(relx=0.5, rely=0.62, anchor="center", relwidth=0.85)
 
-        if mode == "dsq":
-            ctk.CTkLabel(panel, text="Bot is waiting for your decision:",
-                         font=ctk.CTkFont(size=11), text_color=FG_DIM
-                         ).pack(anchor="w", padx=12, pady=(10,4))
-            row = ctk.CTkFrame(panel, fg_color="transparent")
-            row.pack(fill="x", padx=12, pady=(0,10))
-            for label, cmd in [("✓ Applied","APPLIED"),("✗ Skip","SKIP"),("⏹ Quit","QUIT")]:
-                ctk.CTkButton(row, text=label, width=110,
-                              fg_color=SUCCESS if "Applied" in label else BG_FIELD,
-                              hover_color="#1a9e4a" if "Applied" in label else BG_HOVER,
-                              font=ctk.CTkFont(size=11),
-                              command=lambda c=cmd: self._send_bot_action(c)
-                              ).pack(side="left", padx=(0,6))
-        elif mode == "nf":
-            ctk.CTkLabel(panel,
-                         text="Not found on LinkedIn. Skip to next?",
-                         font=ctk.CTkFont(size=11), text_color=FG_DIM
-                         ).pack(anchor="w", padx=12, pady=(10,4))
-            row = ctk.CTkFrame(panel, fg_color="transparent")
-            row.pack(fill="x", padx=12, pady=(0,10))
-            for label, cmd in [("✗ Skip","SKIP"),("⏹ Quit","QUIT")]:
-                ctk.CTkButton(row, text=label, width=110,
-                              fg_color=BG_FIELD, hover_color=BG_HOVER,
-                              font=ctk.CTkFont(size=11),
-                              command=lambda c=cmd: self._send_bot_action(c)
-                              ).pack(side="left", padx=(0,6))
-        elif mode == "yn_apply":
-            ctk.CTkLabel(panel, text="Ready to apply to this job?",
-                         font=ctk.CTkFont(size=11), text_color=FG_DIM
-                         ).pack(anchor="w", padx=12, pady=(10,4))
-            row = ctk.CTkFrame(panel, fg_color="transparent")
-            row.pack(fill="x", padx=12, pady=(0,10))
-            for label, cmd in [("Yes — Apply","APPLIED"),("No — Skip","SKIP")]:
-                ctk.CTkButton(row, text=label, width=130,
-                              fg_color=SUCCESS if "Apply" in label else BG_FIELD,
-                              hover_color="#1a9e4a" if "Apply" in label else BG_HOVER,
-                              font=ctk.CTkFont(size=11),
-                              command=lambda c=cmd: self._send_bot_action(c)
-                              ).pack(side="left", padx=(0,6))
-
-    def _show_action_panel(self, title: str, company: str, url: str, score: str):
-        """Show the Applied/Skip panel while bot waits for user."""
-        # Remove existing panel if any
-        self._hide_action_panel()
-
-        # Create panel above the log area
-        panel = ctk.CTkFrame(self._run_frame, fg_color=BG_CARD,
-                              corner_radius=10, border_width=1,
-                              border_color=ACCENT)
-        panel.pack(fill="x", padx=16, pady=(0, 8), before=self._run_log)
-        self._action_panel = panel
-
-        # Job info
-        ctk.CTkLabel(panel,
-            text="Waiting for your action",
-            font=ctk.CTkFont(size=11, weight="bold"),
-            text_color=ACCENT).pack(anchor="w", padx=12, pady=(10,2))
-
-        ctk.CTkLabel(panel,
-            text=f"{title}",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            text_color=FG, wraplength=500).pack(anchor="w", padx=12)
-
-        ctk.CTkLabel(panel,
-            text=f"{company}   |   Match: {score}%",
-            font=ctk.CTkFont(size=11),
-            text_color=FG_DIM).pack(anchor="w", padx=12, pady=(0,8))
-
-        # Buttons
-        btn_row = ctk.CTkFrame(panel, fg_color="transparent")
-        btn_row.pack(fill="x", padx=12, pady=(0,10))
-
-        ctk.CTkButton(btn_row,
-            text="✓  Applied",
-            width=130,
-            fg_color=SUCCESS,
-            hover_color="#1a9e4a",
-            font=ctk.CTkFont(size=12, weight="bold"),
-            command=lambda: self._send_bot_action("APPLIED")
-        ).pack(side="left", padx=(0,8))
-
-        ctk.CTkButton(btn_row,
-            text="✗  Skip",
-            width=130,
-            fg_color=BG_FIELD,
-            hover_color=BG_HOVER,
-            font=ctk.CTkFont(size=12),
-            command=lambda: self._send_bot_action("SKIP")
-        ).pack(side="left")
-
+        for w in self._action_bar.winfo_children():
+            w.destroy()
+        row = ctk.CTkFrame(self._action_bar, fg_color="transparent")
+        row.pack(fill="x", padx=16, pady=10)
+        for txt, val, col, hov in (("✓  Applied", "applied", SUCCESS, "#1a9e4a"),
+                                   ("Skip",       "skip",    BG_FIELD, BG_HOVER),
+                                   ("Stop",       "stop",    DANGER,   "#C0392B")):
+            ctk.CTkButton(row, text=txt, fg_color=col, hover_color=hov,
+                          height=36, width=120, font=F("label"),
+                          command=lambda v=val: self._answer_apply(v)
+                          ).pack(side="left", padx=(0, 8))
+        if resume:
+            ctk.CTkButton(row, text="Open resume folder", height=36,
+                          fg_color=BG_CARD, hover_color=BG_HOVER, font=F("small"),
+                          command=lambda p=resume: self._open_folder(p)
+                          ).pack(side="right", padx=(8, 0))
         if url:
-            ctk.CTkButton(btn_row,
-                text="Open Job",
-                width=100,
-                fg_color="transparent",
-                text_color=ACCENT,
-                hover_color=BG_HOVER,
-                font=ctk.CTkFont(size=11),
-                command=lambda: __import__("webbrowser").open(url)
-            ).pack(side="left", padx=(8,0))
+            ctk.CTkButton(row, text="Open job link", height=36,
+                          fg_color=BG_CARD, hover_color=BG_HOVER, font=F("small"),
+                          command=lambda u=url: webbrowser.open(u)
+                          ).pack(side="right", padx=(8, 0))
+        self._action_bar.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 8))
+        self._set_status("Waiting for you: %s" % head[:70])
+        self._nav(0)
 
-        self._set_status(f"Review: {title} @ {company} — click Applied or Skip")
+    def _answer_apply(self, val: str):
+        if self._runner:
+            self._runner.send(val)
+        self._hide_action_panel()
+        self._run_phase_lbl.configure(text="Bot is running...")
+        self._set_status({"applied": "Marked as applied — next job...",
+                          "skip":    "Skipped — next job...",
+                          "stop":    "Stopping..."}.get(val, ""))
+
+    def _open_folder(self, path: str):
+        folder = path if os.path.isdir(path) else os.path.dirname(path)
+        try:
+            if sys.platform == "win32":
+                os.startfile(folder)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", folder])
+            else:
+                subprocess.Popen(["xdg-open", folder])
+        except Exception as e:
+            messagebox.showerror("Open folder", "Could not open:\n%s\n\n%s" % (folder, e))
 
     def _hide_action_panel(self):
-        """Remove the action panel."""
-        if hasattr(self, "_action_panel") and self._action_panel:
-            try:
-                self._action_panel.destroy()
-            except Exception:
-                pass
-            self._action_panel = None
-
-    def _send_bot_action(self, action: str):
-        """Send APPLIED or SKIP to orchestrator stdin."""
-        self._hide_action_panel()
-        if self._runner:
-            self._runner.send(action)
-        label = "Applied — resume sent" if action == "APPLIED" else "Skipped — finding next job"
-        self._set_status(label)
-        self._set_phase("Generating next resume...")
+        """Hide the Phase 3 card / action bar."""
+        try:
+            self._hide_action_bar()   # history_view: hides bar + attention card
+        except Exception:
+            pass
 
     def _poll(self):
         try:
@@ -1181,9 +1114,12 @@ class RunMixin:
     def _handle_line(self, line: str):
         s = line.strip()
 
-        # ── One-by-one mode: bot waiting for user action ──────────
-        if s.startswith("BOT_WAITING:"):
-            self._show_one_by_one_action(s)
+        # ── Phase 3: bot opened a job and waits for Applied/Skip/Stop ──
+        if s.startswith("BOT_APPLY:"):
+            try:
+                self._show_apply_card(json.loads(s[len("BOT_APPLY:"):].strip()))
+            except Exception as e:
+                self._append_error("Could not show the apply card: %s" % e)
             return
 
         # ── Real-time activity updates from every pipeline stage ──
@@ -1235,10 +1171,10 @@ class RunMixin:
                 "Resume saved:", "Resume generated:",
                 "Step 3 complete", "DOCX written successfully")):
             self._set_phase("✅ Resume ready")
-        elif any(p in s for p in (
-                "Phase 2 complete", "Phase 2 Summary",
-                "Generated:", "resumes")):
-            self._set_phase("✅ All resumes generated")
+        elif "Phase 2 complete" in s:
+            # Only the real end-of-Phase-2 line — "resumes" used to match
+            # "Generating resumes..." and showed this far too early
+            self._set_phase("✅ Resumes ready")
 
         # Timeouts / warnings
         elif "Relevance check timed out" in s:
@@ -1378,6 +1314,10 @@ class RunMixin:
             try:
                 if role:   self._act_role.configure(text=role[:80])
                 if action: self._act_action.configure(text=action)
+                # Mirror progress on the Run screen (it only said "Bot is running...")
+                if self._live:
+                    self._run_sub_lbl.configure(
+                        text=("%s\n%s" % (action or "", role[:70] if role else "")).strip())
                 if not self._act_strip_visible:
                     self._act_strip.grid(row=1, column=0, sticky="ew",
                                           padx=20, pady=(0, 4))

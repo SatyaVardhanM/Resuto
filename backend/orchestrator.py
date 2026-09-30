@@ -194,43 +194,14 @@ def get_role_choice(roles: list) -> list:
             print("   [ERR] Type A or S")
 
 
-# ── One-by-one mode protocol ──────────────────────────────────────
-# Orchestrator prints:  "BOT_WAITING: title | company | url | score"
-# UI detects this line → shows [Applied] [Skip] buttons
-# User clicks → UI sends "APPLIED" or "SKIP" via stdin
-# Orchestrator reads stdin → continues
-
-BOT_WAITING_PREFIX = "BOT_WAITING:"
-BOT_RESPONSE_APPLIED = "APPLIED"
-BOT_RESPONSE_SKIP    = "SKIP"
-
-
-def _wait_for_user_action(job: dict, loop) -> str:
-    """
-    Print job details to stdout so UI can show Applied/Skip buttons.
-    Block reading stdin until user responds.
-    Returns "APPLIED" or "SKIP".
-    """
-
-
-    title   = job.get("job_title", "Unknown")
-    company = job.get("company",   "Unknown")
-    url     = job.get("job_url",   "")
-    score   = job.get("match_score", 0)
-
-    # Signal UI to show buttons
-    print("%s %s | %s | %s | %s" % (
-        BOT_WAITING_PREFIX, title, company, url, score), flush=True)
-
-    # Read user action from stdin (UI sends APPLIED or SKIP)
-    try:
-        action = input().strip().upper()
-        if action not in (BOT_RESPONSE_APPLIED, BOT_RESPONSE_SKIP):
-            action = BOT_RESPONSE_SKIP   # default to skip on invalid input
-    except (EOFError, KeyboardInterrupt):
-        action = BOT_RESPONSE_SKIP
-
-    return action
+# ── Phase 3 protocol ──────────────────────────────────────────────
+# backend.browser.apply_to_job opens the job page, prints
+#   BOT_APPLY: {json}
+# and the GUI shows ONE card (Applied / Skip / Stop). The answer comes back
+# on stdin as "applied" / "skip" / "stop".
+# _STATE["stop"] is set when the user clicks Stop, so the remaining roles
+# are not searched either.
+_STATE = {"stop": False}
 
 
 def get_apply_mode() -> str:
@@ -276,7 +247,7 @@ async def run_applications(
     """
     import db.tracker as tracker
     from api.resume_gen import batch_generate_resumes
-    from backend.browser import guided_apply_session
+    from backend.browser import apply_to_job
 
     # Lazy imports — module-level stubs are None; resolve here
     from backend.scraper import continuous_job_search
@@ -632,7 +603,7 @@ async def run_applications(
         finally:
             conn.close()
 
-        for job in all_matched:
+        for idx, job in enumerate(all_matched, 1):
             if remaining <= 0:
                 print("[>>] Applied to %d job(s). Limit reached." % max_jobs)
                 break
@@ -660,25 +631,15 @@ async def run_applications(
             finally:
                 conn2.close()
 
-            # Pause — wait for user to click Applied or Skip
-            action = await loop.run_in_executor(
-                None, _wait_for_user_action, job, loop)
-
-            if action == BOT_RESPONSE_APPLIED:
-                # Apply to this job
-                result = await guided_apply_session(
-                    context, [job], reapply=False)
-                applied = result.get("applied", 0)
-                if applied:
-                    applied_total += 1
-                    remaining     -= 1
-                    print("[>>] Applied. Remaining: %d" % remaining)
-                else:
-                    print("[>>] Apply failed — job not counted.")
-            else:
-                # Skip — mark as skipped, count unchanged
-                tracker.mark_job_outcome(job["id"], "skipped")
-                print("[>>] Skipped. Remaining: %d" % remaining)
+            # Open the job page, then ONE question: Applied / Skip / Stop
+            outcome = await apply_to_job(context, job, idx, len(all_matched))
+            if outcome == "applied":
+                applied_total += 1
+                remaining     -= 1
+                print("[>>] Applied. Remaining: %d" % remaining)
+            elif outcome == "stop":
+                _STATE["stop"] = True
+                break
 
     else:
         # ── Continuous mode (original behavior) ──────────────────
@@ -701,27 +662,20 @@ async def run_applications(
             # Same as one-at-a-time but all resumes are pre-generated
             # (remaining was never set in this branch → UnboundLocalError)
             remaining = (max_jobs - applied_total) if not unlimited else 9999
-            for job in ready_jobs:
+            for idx, job in enumerate(ready_jobs, 1):
                 if remaining <= 0:
                     print("[>>] Applied to %d job(s). Limit reached." % max_jobs)
                     break
 
-                action = await loop.run_in_executor(
-                    None, _wait_for_user_action, job, loop)
-
-                if action == BOT_RESPONSE_APPLIED:
-                    result = await guided_apply_session(
-                        context, [job], reapply=False)
-                    applied = result.get("applied", 0)
-                    if applied:
-                        applied_total += 1
-                        remaining     -= 1
-                        print("[>>] Applied. Remaining: %d" % remaining)
-                    else:
-                        print("[>>] Apply attempt failed — not counted.")
-                else:
-                    tracker.mark_job_outcome(job["id"], "skipped")
-                    print("[>>] Skipped.")
+                # Open the job page, then ONE question: Applied / Skip / Stop
+                outcome = await apply_to_job(context, job, idx, len(ready_jobs))
+                if outcome == "applied":
+                    applied_total += 1
+                    remaining     -= 1
+                    print("[>>] Applied. Remaining: %d" % remaining)
+                elif outcome == "stop":
+                    _STATE["stop"] = True
+                    break
 
     return applied_total
 
@@ -1146,6 +1100,10 @@ async def main(gui_args=None):
 
         prev_applied = 0   # track applications per role for one-at-a-time mode
         for role_index, job_keyword in enumerate(selected_roles, 1):
+            if _STATE["stop"]:
+                print("\n[>>] Stopped by you — no more roles will be searched.")
+                break
+
             # One at a time mode — stop after first successful application
             if application_mode == "one_at_a_time" and applied_total > prev_applied:
                 print("\n[>>] One-at-a-time mode: applied to 1 job. Click Start Bot for next.")

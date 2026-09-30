@@ -76,8 +76,8 @@ def _read_stats(since: str = None, recent_since: str = None) -> dict:
             counts.pop("scanning", None)
             avg_row = c.execute(
                 f"SELECT AVG(match_score)AS a FROM applications "
-                f"WHERE status IN('applied','skipped','failed') "
-                f"AND match_score IS NOT NULL {and_s}"
+                f"WHERE status IN('applied','skipped','failed','matched','resume_ready') "
+                f"AND match_score > 0 {and_s}"   # only jobs Claude actually scored
             ).fetchone()
             avg = round(avg_row["a"] or 0) if avg_row and avg_row["a"] else 0
             # Recent: only jobs worth seeing — exclude hard pre-filtered/ineligible
@@ -336,8 +336,9 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
         hdr = ctk.CTkFrame(cf, height=48, corner_radius=0, fg_color=BG_CARD)
         hdr.grid(row=0, column=0, sticky="ew")
         hdr.grid_propagate(False)
-        ctk.CTkLabel(hdr, text="Resuto",
-                     font=F("heading"), text_color=FG).pack(side="left", padx=16)
+        self._hdr_title = ctk.CTkLabel(hdr, text="Run",
+                                       font=F("heading"), text_color=FG)
+        self._hdr_title.pack(side="left", padx=16)
         self._phase_lbl = ctk.CTkLabel(hdr, text="Ready",
                                         font=F("label"), text_color=FG_DIM)
         self._phase_lbl.pack(side="right", padx=16)
@@ -391,6 +392,13 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
                 tab.pack(fill="both", expand=True)
             else:
                 tab.pack_forget()
+
+        # Page name in the header (the window title already says "Resuto")
+        try:
+            self._hdr_title.configure(
+                text=("Run", "Errors", "Stats", "History", "Settings")[idx])
+        except Exception:
+            pass
 
         # Highlight active nav icon + dim others
         for i, (frm, ico) in enumerate(self._nav_btns):
@@ -498,6 +506,9 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
 
     def _set_phase(self, t: str):
         self._phase_lbl.configure(text=t)
+        # Keep the bottom status bar in step during a run (it stayed "Starting...")
+        if getattr(self, "_live", False):
+            self._status_var.set(t)
 
     # ── Settings tab ─────────────────────────────────────────────
     # Settings methods → views/settings_view.py
