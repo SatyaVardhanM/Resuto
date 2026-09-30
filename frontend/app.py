@@ -59,13 +59,30 @@ def _db_path() -> str:
         _db_path._v = os.path.join(get_output_dir(), "applications.db")
     return _db_path._v
 
+def _ensure_schema() -> None:
+    """Run the tracker's schema upgrade once (adds new columns such as
+    actioned_at) before the GUI queries the DB with its own connection."""
+    if getattr(_ensure_schema, "_done", False):
+        return
+    try:
+        import db.tracker as _t
+        _t._connect().close()
+        _ensure_schema._done = True
+    except Exception:
+        pass
+
+
 def _read_stats(since: str = None, recent_since: str = None) -> dict:
     db = _db_path()
     if not os.path.exists(db):
         return {}
+    _ensure_schema()
     try:
-        where = f"WHERE logged_at>='{since}'" if since else ""
-        and_s = f"AND logged_at>='{since}'" if since else ""
+        # COALESCE: a job applied/skipped this run counts even if it was
+        # scanned in an earlier run (actioned_at is set by mark_job_outcome)
+        _t = "COALESCE(actioned_at, logged_at)"
+        where = f"WHERE {_t}>='{since}'" if since else ""
+        and_s = f"AND {_t}>='{since}'" if since else ""
         with sqlite3.connect(db, timeout=5) as c:
             c.execute("PRAGMA journal_mode=WAL")
             c.execute("PRAGMA cache_size=-4096")
@@ -85,7 +102,8 @@ def _read_stats(since: str = None, recent_since: str = None) -> dict:
             # pollute the tab with noise the user can't act on
             jobs = [dict(r) for r in c.execute(
                 "SELECT job_title,company,status,match_score,"
-                "skill_overlap,ai_reason,logged_at,stretch,notes "
+                "skill_overlap,ai_reason,"
+                "COALESCE(actioned_at, logged_at) AS logged_at,stretch,notes "
                 "FROM applications "
                 "WHERE NOT ("
                 "  status='skipped' AND ("
@@ -96,7 +114,7 @@ def _read_stats(since: str = None, recent_since: str = None) -> dict:
                 "    notes LIKE '%Pipeline interrupted%'"
                 "  )"
                 ") "
-                "ORDER BY logged_at DESC LIMIT 12")]
+                "ORDER BY COALESCE(actioned_at, logged_at) DESC LIMIT 12")]
         return {"counts": counts, "avg": avg,
                 "jobs": jobs,
                 "queued": counts.get("matched", 0) + counts.get("resume_ready", 0)}
@@ -107,6 +125,7 @@ def _read_history(filt: str) -> list:
     db = _db_path()
     if not os.path.exists(db):
         return []
+    _ensure_schema()
     # Exclude hard-ineligible pre-filtered jobs from all history views
     # These are title-mismatch skips that have no value to the user
     _noise_filter = (

@@ -49,14 +49,23 @@ class StatsMixin:
                                        font=F("small"), text_color=MUTED)
         self._live_dot.pack(side="right")
 
-        # Review button — enabled only when re-apply candidates exist
+        # Re-apply review (jobs applied to in earlier sessions)
         self._review_btn = ctk.CTkButton(
-            hdr, text="📋  Review Old Applications",
+            hdr, text="Re-apply review",
             height=30, font=F("small"),
             fg_color=BG_FIELD, hover_color=BG_HOVER,
             state="disabled",
             command=self._open_review_window)
         self._review_btn.pack(side="right", padx=(0, 12))
+
+        # Apply to queued jobs (resume ready) — same card flow as a run
+        self._queue_btn = ctk.CTkButton(
+            hdr, text="Apply to queued jobs",
+            height=30, font=F("small"),
+            fg_color=ACCENT, hover_color=BG_HOVER,
+            state="disabled",
+            command=self._start_apply_queue)
+        self._queue_btn.pack(side="right", padx=(0, 8))
 
         # Row 1: activity strip (hidden until bot runs)
         self._act_strip = ctk.CTkFrame(f, fg_color=BG_CARD, corner_radius=8)
@@ -198,6 +207,8 @@ class StatsMixin:
                 pass  # grid layout keeps all cards visible
 
         self._draw_donut(applied, skipped, failed)
+        # Keep "Apply to queued jobs (N)" / "Re-apply review (N)" current
+        self._refresh_review_btn()
 
         # Incremental job list update
         # Track rows by position; only destroy/create if count changed
@@ -398,15 +409,15 @@ class StatsMixin:
                 "%Y-%m-%d %H:%M:%S")
             applied_old = get_reapply_candidates(session_start=cutoff)
 
-            count = len(queued) + len(applied_old)
-            if count > 0:
-                self._review_btn.configure(
-                    state="normal",
-                    text="📋  Review Pending (%d)" % count)
-            else:
-                self._review_btn.configure(
-                    state="disabled",
-                    text="📋  Review Pending")
+            running = bool(self._runner and self._runner.running())
+            self._queue_btn.configure(
+                state="normal" if queued and not running else "disabled",
+                text="Apply to queued jobs (%d)" % len(queued) if queued
+                     else "Apply to queued jobs")
+            self._review_btn.configure(
+                state="normal" if applied_old else "disabled",
+                text="Re-apply review (%d)" % len(applied_old) if applied_old
+                     else "Re-apply review")
         except Exception:
             pass
 

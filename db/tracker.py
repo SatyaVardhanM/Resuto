@@ -108,6 +108,7 @@ COLUMNS = [
     # Notes
     ("notes",                "TEXT"),
     ("stretch",              "INTEGER"),  # 1 = apply but upskilling recommended
+    ("actioned_at",          "TEXT"),     # when the user applied/skipped (Phase 3)
 ]
 
 # Just the column names, in order
@@ -973,7 +974,8 @@ def get_jobs_ready_to_apply() -> list:
                        matched_skills, missing_skills
                 FROM {TABLE}
                 WHERE status IN ('matched', 'resume_ready')
-                  AND resume_ready = 1"""
+                  AND resume_ready = 1
+                ORDER BY match_score DESC"""
         ).fetchall()
         return [dict(r) for r in rows]
     finally:
@@ -989,9 +991,11 @@ def mark_job_outcome(row_id: int, status: str) -> None:
     applied_at = now if status == "applied" else ""
     conn = _connect()
     try:
+        # actioned_at lets Stats count what the user did THIS run, even for
+        # jobs that were scanned in an earlier run
         conn.execute(
-            f"UPDATE {TABLE} SET status = ?, applied_at = ? WHERE id = ?",
-            (status, applied_at, row_id),
+            f"UPDATE {TABLE} SET status = ?, applied_at = ?, actioned_at = ? WHERE id = ?",
+            (status, applied_at, now, row_id),
         )
         conn.commit()
     finally:

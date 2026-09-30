@@ -634,7 +634,8 @@ async def _ask_user_choice(prompt: str, valid: tuple) -> str:
             return answer
         print(f"   [WARN]  Please type one of: {', '.join(valid)}")
 
-async def apply_to_job(context, job: dict, index: int = 1, total: int = 1) -> str:
+async def apply_to_job(context, job: dict, index: int = 1, total: int = 1,
+                       applied: int = None, limit: int = None) -> str:
     """
     Phase 3, ONE question per job:
       1. open the job page in the bot's browser,
@@ -654,6 +655,7 @@ async def apply_to_job(context, job: dict, index: int = 1, total: int = 1) -> st
     score   = job.get("match_score") or 0
 
     opened = False
+    page = None
     if url:
         try:
             page = await _setup_page(context)
@@ -670,13 +672,25 @@ async def apply_to_job(context, job: dict, index: int = 1, total: int = 1) -> st
     print("BOT_APPLY: " + _json.dumps({
         "title": title, "company": company, "url": url, "score": score,
         "resume": resume, "index": index, "total": total, "opened": opened,
+        "applied": applied, "limit": limit,
     }), flush=True)
     log("Waiting for user: %s @ %s (%d/%d)" % (title, company, index, total))
 
     # "stop" first: on EOF (GUI closed) _ask_user_choice returns valid[0]
-    choice = await _ask_user_choice(
-        "   [WAIT] Apply in the browser, then choose Applied / Skip / Stop:",
-        ("stop", "applied", "skip", "d", "done", "s", "q", "quit"))
+    while True:
+        choice = await _ask_user_choice(
+            "   [WAIT] Apply in the browser, then choose Applied / Skip / Stop:",
+            ("stop", "applied", "skip", "reopen", "d", "done", "s", "q", "quit"))
+        if choice != "reopen":
+            break
+        # "Show job again": bring the bot's browser back to this job
+        try:
+            if page is None or page.is_closed():
+                page = await _setup_page(context)
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await page.bring_to_front()
+        except Exception as e:
+            print(f"   [WARN]  Could not reopen the job page: {e}", flush=True)
 
     if choice in ("applied", "d", "done"):
         tracker.mark_job_outcome(job["id"], "applied")

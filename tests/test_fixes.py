@@ -57,6 +57,7 @@ def test_handle_line_does_not_crash():
             self._tb_buffer, self._tb_active = [], False
             self._current_phase = 0
             self._apply_prompt_shown = False
+            self._run_summary = {}
         def __getattr__(self, n): return _Any()
         def _append_error(self, text): self.errors.append(text)
         def _show_action_bar(self, kind): self.bars.append(kind)
@@ -284,7 +285,7 @@ def test_continuous_mode_apply_skip_loop(monkeypatch):
                         lambda rid, st: calls["skipped"].append((rid, st)))
     monkeypatch.setattr(o, "extract_jd_metadata", lambda *a, **k: {"skills": []})
 
-    async def fake_apply(context, job, idx, total):
+    async def fake_apply(context, job, idx, total, **k):
         calls["waits"] += 1
         calls["skipped"].append((job["id"], "skipped"))
         return "skipped"

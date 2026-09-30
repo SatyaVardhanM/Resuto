@@ -616,6 +616,11 @@ class RunMixin:
         self._run_sub_lbl = ctk.CTkLabel(inner, text="",
                                           font=F("label"), text_color=FG_DIM)
         self._run_sub_lbl.pack()
+        # Shown on the end screen when jobs are still queued
+        self._run_queue_btn = ctk.CTkButton(inner, text="Apply to queued jobs",
+                                            height=36, fg_color=ACCENT,
+                                            hover_color=ACCENT_HV,
+                                            command=self._start_apply_queue)
 
         # Attention card (shown when bot asks for input)
         self._attention_card = ctk.CTkFrame(f, fg_color=BG_CARD,
@@ -931,8 +936,13 @@ class RunMixin:
         args += ["--application-mode", prefs.get("application_mode", "continuous")]
         args += ["--roles"] + selected
 
-        # Clear leftover action bar from previous run
+        # Clear leftover action bar / end-screen button from previous run
         self._hide_action_panel()
+        self._run_summary = {}
+        try:
+            self._run_queue_btn.pack_forget()
+        except Exception:
+            pass
         # Drain any stale queue messages from previous run
         try:
             while True: self._q.get_nowait()
@@ -1005,13 +1015,21 @@ class RunMixin:
         self._run_phase_lbl.configure(text="Your turn — apply in the browser")
         self._run_sub_lbl.configure(text="Job %d of %d" % (idx, total))
 
+        applied = data.get("applied")
+        limit   = data.get("limit")
         head = "%s @ %s" % (title, company) if company else title
-        sub  = "Match %s%%   •   Job %d of %d" % (score, idx, total)
+        if applied is not None and limit:
+            prog = "Applied %d of %d   •   Job %d of %d in queue" % (applied, limit, idx, total)
+        elif applied is not None:
+            prog = "Applied %d   •   Job %d of %d in queue" % (applied, idx, total)
+        else:
+            prog = "Job %d of %d" % (idx, total)
+        sub  = "Match %s%%   •   %s" % (score, prog)
         if resume:
             sub += "\nResume: %s" % os.path.basename(resume)
         sub += ("\n\nThe job is open in the bot's browser. Apply there, then choose below."
                 if opened else
-                "\n\nCouldn't open the job page automatically — use \"Open job link\".")
+                "\n\nCouldn't open the job page automatically — try \"Show job again\".")
         self._attention_hl.configure(text=head)
         self._attention_sub.configure(text=sub, justify="center")
         self._attention_card.place(relx=0.5, rely=0.62, anchor="center", relwidth=0.85)
@@ -1033,12 +1051,74 @@ class RunMixin:
                           command=lambda p=resume: self._open_folder(p)
                           ).pack(side="right", padx=(8, 0))
         if url:
-            ctk.CTkButton(row, text="Open job link", height=36,
+            # Brings the BOT's browser back to this job (not the default browser)
+            ctk.CTkButton(row, text="Show job again", height=36,
                           fg_color=BG_CARD, hover_color=BG_HOVER, font=F("small"),
-                          command=lambda u=url: webbrowser.open(u)
+                          command=lambda: self._runner and self._runner.send("reopen")
                           ).pack(side="right", padx=(8, 0))
         self._action_bar.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 8))
         self._set_status("Waiting for you: %s" % head[:70])
+        self._nav(0)
+
+    def _show_limit_card(self, data: dict):
+        limit = int(data.get("limit") or 0)
+        left  = int(data.get("left") or 0)
+        self._run_phase_lbl.configure(text="Limit reached")
+        self._attention_hl.configure(
+            text="You've reached your limit of %d application%s"
+                 % (limit, "" if limit == 1 else "s"))
+        self._attention_sub.configure(
+            text="%d more job%s ready to apply. Continue applying?"
+                 % (left, " is" if left == 1 else "s are"), justify="center")
+        self._attention_card.place(relx=0.5, rely=0.62, anchor="center", relwidth=0.85)
+        for w in self._action_bar.winfo_children():
+            w.destroy()
+        row = ctk.CTkFrame(self._action_bar, fg_color="transparent")
+        row.pack(fill="x", padx=16, pady=10)
+        ctk.CTkButton(row, text="Continue applying", fg_color=SUCCESS,
+                      hover_color="#1a9e4a", height=36, width=160, font=F("label"),
+                      command=lambda: self._answer_apply("continue")
+                      ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(row, text="Finish", fg_color=BG_FIELD, hover_color=BG_HOVER,
+                      height=36, width=120, font=F("label"),
+                      command=lambda: self._answer_apply("finish")
+                      ).pack(side="left")
+        self._action_bar.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 8))
+        self._set_status("Limit reached — continue or finish?")
+        self._nav(0)
+
+    def _start_apply_queue(self):
+        """Go through queued jobs (resume ready) without scanning LinkedIn."""
+        if self._runner and self._runner.running():
+            messagebox.showinfo(
+                "Bot is running",
+                "Click Stop to close the current run first, then try again.")
+            return
+        if not self._api_var.get().strip():
+            messagebox.showerror("No API Key", "Add your Anthropic API key in Settings first.")
+            return
+        try:
+            self._run_queue_btn.pack_forget()
+        except Exception:
+            pass
+        self._clear_errors()
+        self._err_count = 0
+        self._run_summary = {}
+        self._live = True
+        self._live_dot.configure(text_color=SUCCESS)
+        self._bot_start = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._stats_last_hash = None
+        self._current_phase = 3
+        self._stop_btn.pack(side="right")
+        self._show_step(4)
+        self._run_phase_lbl.configure(text="Bot is running...")
+        self._run_sub_lbl.configure(text="Opening the browser for your queued jobs...")
+        self._set_phase("Applying to queued jobs")
+        self._hide_action_panel()
+        self._runner = BotRunner(self._api_var.get().strip(),
+                                 ["--apply-queue"],
+                                 self._on_bot_line, self._on_bot_done)
+        self._runner.start()
         self._nav(0)
 
     def _answer_apply(self, val: str):
@@ -1046,9 +1126,11 @@ class RunMixin:
             self._runner.send(val)
         self._hide_action_panel()
         self._run_phase_lbl.configure(text="Bot is running...")
-        self._set_status({"applied": "Marked as applied — next job...",
-                          "skip":    "Skipped — next job...",
-                          "stop":    "Stopping..."}.get(val, ""))
+        self._set_status({"applied":  "Marked as applied — next job...",
+                          "skip":     "Skipped — next job...",
+                          "stop":     "Stopping...",
+                          "continue": "Continuing with the queued jobs...",
+                          "finish":   "Finishing the run..."}.get(val, ""))
 
     def _open_folder(self, path: str):
         folder = path if os.path.isdir(path) else os.path.dirname(path)
@@ -1113,6 +1195,21 @@ class RunMixin:
 
     def _handle_line(self, line: str):
         s = line.strip()
+
+        # ── Limit reached with jobs still queued: continue or finish ──
+        if s.startswith("BOT_LIMIT:"):
+            try:
+                self._show_limit_card(json.loads(s[len("BOT_LIMIT:"):].strip()))
+            except Exception as e:
+                self._append_error("Could not show the limit prompt: %s" % e)
+            return
+        # ── End-of-run numbers for the summary screen ──────────────
+        if s.startswith("BOT_SUMMARY:"):
+            try:
+                self._run_summary = json.loads(s[len("BOT_SUMMARY:"):].strip())
+            except Exception:
+                self._run_summary = {}
+            return
 
         # ── Phase 3: bot opened a job and waits for Applied/Skip/Stop ──
         if s.startswith("BOT_APPLY:"):
@@ -1229,9 +1326,23 @@ class RunMixin:
             # Refresh stats and show idle state — don't mark run as done yet.
             self._stats_last_hash = None
             self._refresh_stats()
+            summ   = getattr(self, "_run_summary", {}) or {}
+            queued = int(summ.get("queued") or 0)
+            result = "Applied %d  •  Skipped %d  •  %d still queued" % (
+                int(summ.get("applied") or 0), int(summ.get("skipped") or 0), queued)
+            self._hide_action_panel()
             self._run_phase_lbl.configure(text="Run complete")
-            self._run_sub_lbl.configure(text="Browser is open. Click Stop to close it.")
-            self._set_phase("Run complete — browser open")
+            self._run_sub_lbl.configure(
+                text=result + "\n\nThe browser is still open — click Stop to close it.")
+            self._step_lbl.configure(text="Finished")
+            self._set_phase("Run complete")
+            try:
+                self._act_action.configure(text="Run complete — " + result)
+            except Exception:
+                pass
+            if queued > 0:
+                self._run_queue_btn.configure(text="Apply to queued jobs (%d)" % queued)
+                self._run_queue_btn.pack(pady=(14, 0))
             self._live = False
             self._live_dot.configure(text_color=MUTED)
             # Keep Stop button visible — clicking it closes the browser
@@ -1334,8 +1445,9 @@ class RunMixin:
             from db.tracker import get_reapply_candidates, get_jobs_ready_to_apply
             from datetime import datetime, timedelta
 
-            # Queued jobs ready to apply (skipped Phase 3 last time)
-            queued = get_jobs_ready_to_apply()
+            # Queued jobs now have their own button ("Apply to queued jobs"),
+            # which uses the same one-card-per-job flow as a normal run
+            queued = []
 
             # Previously applied jobs from older sessions
             cutoff = (datetime.now() - timedelta(hours=1)).strftime(
@@ -1351,7 +1463,7 @@ class RunMixin:
             candidates = queued + applied_old
             if not candidates:
                 messagebox.showinfo("Nothing to Review",
-                    "No queued or previously-applied jobs to review.")
+                    "No previously-applied jobs to review.")
                 return
             key = self._api_var.get().strip()
             ReviewWindow(self, candidates, key,

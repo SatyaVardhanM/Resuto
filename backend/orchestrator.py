@@ -201,7 +201,62 @@ def get_role_choice(roles: list) -> list:
 # on stdin as "applied" / "skip" / "stop".
 # _STATE["stop"] is set when the user clicks Stop, so the remaining roles
 # are not searched either.
-_STATE = {"stop": False}
+_STATE = {"stop": False, "applied": 0, "skipped": 0}
+
+
+async def _ask_continue_after_limit(limit: int, left: int) -> bool:
+    """Limit reached but jobs are still queued: ask whether to keep going."""
+    from backend.browser import _ask_user_choice
+    print("BOT_LIMIT: " + json.dumps({"limit": limit, "left": left}), flush=True)
+    choice = await _ask_user_choice(
+        "   [LIMIT] Limit reached. Continue applying / Finish:",
+        ("finish", "continue"))          # EOF → "finish"
+    return choice == "continue"
+
+
+async def _apply_queue_loop(context, jobs: list, applied_total: int,
+                            max_jobs: int, unlimited: bool) -> int:
+    """
+    Phase 3 for a list of ready jobs: ONE card per job (Applied/Skip/Stop).
+    Skips don't count towards the limit. When the limit is reached and jobs
+    are left, the user can continue through the rest of the queue.
+    """
+    from backend.browser import apply_to_job
+    limit     = None if unlimited else max_jobs
+    no_limit  = unlimited
+    total     = len(jobs)
+    for idx, job in enumerate(jobs, 1):
+        if not no_limit and applied_total >= max_jobs:
+            left = total - idx + 1
+            print("[>>] Applied to %d job(s). Limit reached." % applied_total, flush=True)
+            if await _ask_continue_after_limit(max_jobs, left):
+                no_limit = True
+                print("[>>] Continuing with the remaining %d job(s)." % left, flush=True)
+            else:
+                break
+        outcome = await apply_to_job(context, job, idx, total,
+                                     applied=applied_total, limit=limit)
+        if outcome == "applied":
+            applied_total += 1
+            _STATE["applied"] += 1
+        elif outcome == "skipped":
+            _STATE["skipped"] += 1
+        elif outcome == "stop":
+            _STATE["stop"] = True
+            break
+    return applied_total
+
+
+def _print_run_summary() -> None:
+    """One machine-readable line for the GUI's end-of-run screen."""
+    try:
+        import db.tracker as _t
+        queued = len(_t.get_jobs_ready_to_apply())
+    except Exception:
+        queued = 0
+    print("BOT_SUMMARY: " + json.dumps({"applied": _STATE["applied"],
+                                        "skipped": _STATE["skipped"],
+                                        "queued": queued}), flush=True)
 
 
 def get_apply_mode() -> str:
@@ -632,11 +687,16 @@ async def run_applications(
                 conn2.close()
 
             # Open the job page, then ONE question: Applied / Skip / Stop
-            outcome = await apply_to_job(context, job, idx, len(all_matched))
+            outcome = await apply_to_job(
+                context, job, idx, len(all_matched),
+                applied=applied_total, limit=None if unlimited else max_jobs)
             if outcome == "applied":
                 applied_total += 1
                 remaining     -= 1
+                _STATE["applied"] += 1
                 print("[>>] Applied. Remaining: %d" % remaining)
+            elif outcome == "skipped":
+                _STATE["skipped"] += 1
             elif outcome == "stop":
                 _STATE["stop"] = True
                 break
@@ -658,24 +718,10 @@ async def run_applications(
             print("   %d job(s) have resumes ready. Review each one:" % len(ready_jobs))
             print("=" * 60)
 
-            # Continuous mode: show Apply/Skip panel for each ready job
-            # Same as one-at-a-time but all resumes are pre-generated
-            # (remaining was never set in this branch → UnboundLocalError)
-            remaining = (max_jobs - applied_total) if not unlimited else 9999
-            for idx, job in enumerate(ready_jobs, 1):
-                if remaining <= 0:
-                    print("[>>] Applied to %d job(s). Limit reached." % max_jobs)
-                    break
-
-                # Open the job page, then ONE question: Applied / Skip / Stop
-                outcome = await apply_to_job(context, job, idx, len(ready_jobs))
-                if outcome == "applied":
-                    applied_total += 1
-                    remaining     -= 1
-                    print("[>>] Applied. Remaining: %d" % remaining)
-                elif outcome == "stop":
-                    _STATE["stop"] = True
-                    break
+            # Continuous mode: one card per ready job (older queued jobs
+            # included). At the limit the user may continue with the rest.
+            applied_total = await _apply_queue_loop(
+                context, ready_jobs, applied_total, max_jobs, unlimited)
 
     return applied_total
 
@@ -750,6 +796,110 @@ async def run_phase2_only(job_ids: list = None, gui_mode: bool = True):
     log("Phase 2 only complete: %s" % results)
     print("[>>] Phase 2 only complete: %s generated, %s failed" % (
         results.get("generated",0), results.get("failed",0)))
+
+
+def _prepare_playwright():
+    """DLL/greenlet workarounds for the Nuitka exe, then import Playwright.
+    Returns (async_playwright, create_logged_in_context, minimize_browser)."""
+    # Pre-load python DLL + add exe dir to DLL search path
+    # Fixes: LoadLibraryExW _greenlet.pyd "module not found" in Nuitka standalone
+    try:
+        import ctypes as _ct, sys as _sys2, os as _os2
+        _exe_dir = _os2.path.dirname(_sys2.executable)
+
+        # Add exe directory to Windows DLL search path (Python 3.8+)
+        if hasattr(_os2, "add_dll_directory"):
+            _os2.add_dll_directory(_exe_dir)
+            # Also add any subdirs that contain .pyd files
+            for _sd in _os2.listdir(_exe_dir):
+                _sdp = _os2.path.join(_exe_dir, _sd)
+                if _os2.path.isdir(_sdp) and any(
+                    f.endswith(".pyd") for f in _os2.listdir(_sdp)
+                ):
+                    _os2.add_dll_directory(_sdp)
+
+        # Pre-load python DLL into process cache
+        _py_dll = "python%d%d.dll" % (_sys2.version_info.major, _sys2.version_info.minor)
+        for _loc in [_exe_dir,
+                     _os2.path.join(_exe_dir, "greenlet"),
+                     _os2.path.join(_os2.environ.get("SystemRoot","C:\\Windows"), "System32")]:
+            _full = _os2.path.join(_loc, _py_dll)
+            if _os2.path.exists(_full):
+                _ct.CDLL(_full)
+                log("Pre-loaded %s from %s" % (_py_dll, _loc))
+                break
+    except Exception as _dll_e:
+        log_warn("DLL pre-load warning: %s" % _dll_e)
+
+    # Inject pure-Python greenlet stub if C extension unavailable
+    # This lets playwright import succeed — async mode never calls greenlet at runtime
+    try:
+        import greenlet as _gl_test
+        _gl_test.getcurrent   # test it works
+    except (ImportError, OSError, AttributeError):
+        import sys as _sys3, types as _types
+        _gl_stub = _types.ModuleType("greenlet")
+        _gl_stub.__version__ = "stub"
+
+        class _GreenletExit(BaseException): pass
+        class _GreenletError(Exception): pass
+        class _Greenlet:
+            def __init__(self, run=None, parent=None):
+                self.run    = run
+                self.parent = parent
+                self._dead  = False
+            def switch(self, *a, **k):
+                return self.run(*a, **k) if self.run else None
+            def __call__(self, *a, **k):
+                return self.switch(*a, **k)
+            def throw(self, t=None, v=None, tb=None):
+                raise (t or _GreenletExit)()
+            @property
+            def dead(self): return self._dead
+            gr_frame = None
+
+        # getcurrent() must return a callable stub instance (not None)
+        # playwright calls getcurrent()(...) treating greenlets as callables
+        _current_stub = _Greenlet()
+        _current_stub._dead = False
+
+        _gl_stub.greenlet        = _Greenlet
+        _gl_stub.GreenletExit    = _GreenletExit
+        _gl_stub.error           = _GreenletError
+        _gl_stub.getcurrent      = lambda: _current_stub
+        _gl_stub.settrace        = lambda cb: None
+        _gl_stub.gettrace        = lambda: None
+        _gl_stub.GREENLET_USE_CONTEXT_VARS = False
+        _sys3.modules["greenlet"]            = _gl_stub
+        _sys3.modules["greenlet._greenlet"]  = _gl_stub
+        log("Greenlet C extension unavailable — using pure-Python stub (async mode OK)")
+
+    # Lazy imports of backend modules — resolved here inside main()
+    # Module-level stubs are None; we set real functions here
+    try:
+        from backend.scraper import continuous_job_search
+        from backend.browser import create_logged_in_context, minimize_browser
+        from api.filter   import check_job_relevance, print_relevance_report
+        log("Backend modules imported successfully")
+    except Exception as _imp_e:
+        print("[!!] Backend import failed: %s" % _imp_e, flush=True)
+        log_error("Backend import failed: %s" % _imp_e)
+        raise RuntimeError("Backend import failed: %s" % _imp_e) from _imp_e
+
+    # Lazy import — only load playwright when bot actually runs
+    try:
+        from playwright.async_api import async_playwright
+    except (ImportError, Exception) as _e:
+        print("[!!] Playwright import failed: %s" % _e, flush=True)
+        print("[!!] Fix: Run 'resuto.exe --install-browsers' from Command Prompt", flush=True)
+        print("[!!] Or install manually: pip install playwright && playwright install chromium", flush=True)
+        raise RuntimeError(
+            "Playwright not available.\n"
+            "Run: resuto.exe --install-browsers\n"
+            "Or reinstall Resuto to trigger automatic browser download.\n"
+            "Details: %s" % _e
+        ) from _e
+    return async_playwright, create_logged_in_context, minimize_browser
 
 
 def _normalize_filter_values(values, code_map):
@@ -982,104 +1132,7 @@ async def main(gui_args=None):
     out_path("resumes", "docx")
     out_path("resumes", "pdf")
 
-    # Pre-load python DLL + add exe dir to DLL search path
-    # Fixes: LoadLibraryExW _greenlet.pyd "module not found" in Nuitka standalone
-    try:
-        import ctypes as _ct, sys as _sys2, os as _os2
-        _exe_dir = _os2.path.dirname(_sys2.executable)
-
-        # Add exe directory to Windows DLL search path (Python 3.8+)
-        if hasattr(_os2, "add_dll_directory"):
-            _os2.add_dll_directory(_exe_dir)
-            # Also add any subdirs that contain .pyd files
-            for _sd in _os2.listdir(_exe_dir):
-                _sdp = _os2.path.join(_exe_dir, _sd)
-                if _os2.path.isdir(_sdp) and any(
-                    f.endswith(".pyd") for f in _os2.listdir(_sdp)
-                ):
-                    _os2.add_dll_directory(_sdp)
-
-        # Pre-load python DLL into process cache
-        _py_dll = "python%d%d.dll" % (_sys2.version_info.major, _sys2.version_info.minor)
-        for _loc in [_exe_dir,
-                     _os2.path.join(_exe_dir, "greenlet"),
-                     _os2.path.join(_os2.environ.get("SystemRoot","C:\\Windows"), "System32")]:
-            _full = _os2.path.join(_loc, _py_dll)
-            if _os2.path.exists(_full):
-                _ct.CDLL(_full)
-                log("Pre-loaded %s from %s" % (_py_dll, _loc))
-                break
-    except Exception as _dll_e:
-        log_warn("DLL pre-load warning: %s" % _dll_e)
-
-    # Inject pure-Python greenlet stub if C extension unavailable
-    # This lets playwright import succeed — async mode never calls greenlet at runtime
-    try:
-        import greenlet as _gl_test
-        _gl_test.getcurrent   # test it works
-    except (ImportError, OSError, AttributeError):
-        import sys as _sys3, types as _types
-        _gl_stub = _types.ModuleType("greenlet")
-        _gl_stub.__version__ = "stub"
-
-        class _GreenletExit(BaseException): pass
-        class _GreenletError(Exception): pass
-        class _Greenlet:
-            def __init__(self, run=None, parent=None):
-                self.run    = run
-                self.parent = parent
-                self._dead  = False
-            def switch(self, *a, **k):
-                return self.run(*a, **k) if self.run else None
-            def __call__(self, *a, **k):
-                return self.switch(*a, **k)
-            def throw(self, t=None, v=None, tb=None):
-                raise (t or _GreenletExit)()
-            @property
-            def dead(self): return self._dead
-            gr_frame = None
-
-        # getcurrent() must return a callable stub instance (not None)
-        # playwright calls getcurrent()(...) treating greenlets as callables
-        _current_stub = _Greenlet()
-        _current_stub._dead = False
-
-        _gl_stub.greenlet        = _Greenlet
-        _gl_stub.GreenletExit    = _GreenletExit
-        _gl_stub.error           = _GreenletError
-        _gl_stub.getcurrent      = lambda: _current_stub
-        _gl_stub.settrace        = lambda cb: None
-        _gl_stub.gettrace        = lambda: None
-        _gl_stub.GREENLET_USE_CONTEXT_VARS = False
-        _sys3.modules["greenlet"]            = _gl_stub
-        _sys3.modules["greenlet._greenlet"]  = _gl_stub
-        log("Greenlet C extension unavailable — using pure-Python stub (async mode OK)")
-
-    # Lazy imports of backend modules — resolved here inside main()
-    # Module-level stubs are None; we set real functions here
-    try:
-        from backend.scraper import continuous_job_search
-        from backend.browser import create_logged_in_context, minimize_browser
-        from api.filter   import check_job_relevance, print_relevance_report
-        log("Backend modules imported successfully")
-    except Exception as _imp_e:
-        print("[!!] Backend import failed: %s" % _imp_e, flush=True)
-        log_error("Backend import failed: %s" % _imp_e)
-        raise RuntimeError("Backend import failed: %s" % _imp_e) from _imp_e
-
-    # Lazy import — only load playwright when bot actually runs
-    try:
-        from playwright.async_api import async_playwright
-    except (ImportError, Exception) as _e:
-        print("[!!] Playwright import failed: %s" % _e, flush=True)
-        print("[!!] Fix: Run 'resuto.exe --install-browsers' from Command Prompt", flush=True)
-        print("[!!] Or install manually: pip install playwright && playwright install chromium", flush=True)
-        raise RuntimeError(
-            "Playwright not available.\n"
-            "Run: resuto.exe --install-browsers\n"
-            "Or reinstall Resuto to trigger automatic browser download.\n"
-            "Details: %s" % _e
-        ) from _e
+    async_playwright, create_logged_in_context, minimize_browser = _prepare_playwright()
 
     async with async_playwright() as playwright:
         # Debug: verify create_logged_in_context is the real function not None
@@ -1143,6 +1196,7 @@ async def main(gui_args=None):
         # Record cost now — the user may close the browser/app while the
         # bot waits below, and a terminated process records nothing
         _finish_cost_tracking()
+        _print_run_summary()
         print("[BOT_IDLE]")
         print("=" * 50, flush=True)
 
@@ -1167,6 +1221,44 @@ async def main(gui_args=None):
     print("\n[OK] Done!\n")
 
 
+async def run_apply_queue():
+    """
+    "Apply to queued jobs": no scanning, no resume generation — open the
+    browser and go through every job whose resume is ready.
+    """
+    from datetime import datetime as _dt
+    global SESSION_START
+    SESSION_START = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+    set_run(SESSION_START)
+    log_section("Bot started — apply to queued jobs")
+    import db.tracker as tracker
+    jobs = tracker.get_jobs_ready_to_apply()
+    print("[>>] %d queued job(s) ready to apply." % len(jobs), flush=True)
+    if not jobs:
+        _print_run_summary()
+        print("[OK] Session complete.")
+        print("[BOT_IDLE]", flush=True)
+        return
+
+    async_playwright, create_logged_in_context, minimize_browser = _prepare_playwright()
+    async with async_playwright() as playwright:
+        browser, context, page = await create_logged_in_context(playwright)
+        await _apply_queue_loop(context, jobs, 0, 0, True)
+        print("\n[OK] Session complete.")
+        _finish_cost_tracking()
+        _print_run_summary()
+        print("[BOT_IDLE]", flush=True)
+        await minimize_browser(context)
+        try:
+            await asyncio.get_event_loop().run_in_executor(None, sys.stdin.readline)
+        except Exception:
+            pass
+        try:
+            await browser.close()
+        except Exception:
+            pass
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     """Single source of truth for bot flags — used by `python orchestrator.py`
     AND by the compiled exe's --bot-mode (frontend/app.py)."""
@@ -1189,6 +1281,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="Skip Phase 1, run Phase 2 only")
     parser.add_argument("--job-ids",      nargs="+", type=int, default=[],
                         help="Specific DB job IDs to generate resumes for")
+    parser.add_argument("--apply-queue",  action="store_true",
+                        help="Skip scanning; go through jobs whose resume is ready")
     return parser
 
 
@@ -1237,7 +1331,9 @@ def run_from_argv(argv=None) -> None:
 
     try:
         # Phase 2 only mode — manual resume generation from History tab
-        if args.phase2_only:
+        if args.apply_queue:
+            asyncio.run(run_apply_queue())
+        elif args.phase2_only:
             asyncio.run(run_phase2_only(
                 job_ids=args.job_ids or None,
                 gui_mode=args.gui))

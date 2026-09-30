@@ -114,3 +114,41 @@ def test_no_method_shadowed_between_app_mixins():
                     seen.setdefault(n.name, []).append(cls.name)
     dupes = {k: v for k, v in seen.items() if len(v) > 1}
     assert not dupes, dupes
+
+
+def _run_loop(monkeypatch, answers, continue_answer, n_jobs=3, max_jobs=1):
+    import backend.orchestrator as o
+    import backend.browser as b
+    o._STATE.update(stop=False, applied=0, skipped=0)
+    seen = []
+    async def fake_apply(context, job, idx, total, applied=None, limit=None):
+        seen.append((idx, total, applied, limit))
+        return answers.pop(0)
+    asked = []
+    async def fake_continue(limit, left):
+        asked.append((limit, left))
+        return continue_answer
+    monkeypatch.setattr(b, "apply_to_job", fake_apply)
+    monkeypatch.setattr(o, "_ask_continue_after_limit", fake_continue)
+    jobs = [{"id": i} for i in range(1, n_jobs + 1)]
+    total = asyncio.run(o._apply_queue_loop(None, jobs, 0, max_jobs, False))
+    return total, seen, asked, dict(o._STATE)
+
+
+def test_limit_reached_can_continue_through_queue(monkeypatch):
+    # skip, apply (limit 1 reached) → asked → continue → apply the last one
+    total, seen, asked, st = _run_loop(monkeypatch, ["skipped", "applied", "applied"], True, 3)
+    assert total == 2 and asked == [(1, 1)]
+    assert [s[0] for s in seen] == [1, 2, 3] and seen[0][3] == 1   # limit shown on card
+    assert st["applied"] == 2 and st["skipped"] == 1
+
+
+def test_limit_reached_finish_stops(monkeypatch):
+    total, seen, asked, st = _run_loop(monkeypatch, ["applied"], False, 3)
+    assert total == 1 and asked == [(1, 2)] and len(seen) == 1
+
+
+def test_bot_parser_has_apply_queue():
+    from backend.orchestrator import build_arg_parser
+    a, _ = build_arg_parser().parse_known_args(["--gui", "--apply-queue"])
+    assert a.apply_queue
