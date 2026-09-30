@@ -230,6 +230,14 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
         self._poll()
         self._sched_stats()
 
+        # Record token cost of Claude calls made from the GUI too
+        # (role suggestions, intake). fail_fast=False: errors pass through.
+        try:
+            from core.costs import install_usage_tracking
+            install_usage_tracking(fail_fast=False)
+        except Exception:
+            pass
+
         # Auto-update: check GitHub releases in the background. The result is
         # handed to the Tk thread through the queue (see RunMixin._poll).
         try:
@@ -438,6 +446,24 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
         user_stopped = getattr(self, "_user_stopped", False)
         self._user_stopped = False  # reset flag
         ok = (code == 0) or user_stopped  # user stop is not an error
+
+        if code == 3 and not user_stopped:
+            # Bot exit code 3 = Anthropic credit balance too low (core/costs.py)
+            from core.costs import BILLING_URL
+            self._set_phase("Out of Anthropic credit")
+            self._set_status("Run stopped — your Anthropic credit balance is too low.")
+            if messagebox.askyesno(
+                    "Out of Anthropic credit",
+                    "The run stopped because your Anthropic credit balance "
+                    "is too low.\n\nAdd credits, then start the run again.\n\n"
+                    "Open the Anthropic billing page now?"):
+                import webbrowser
+                webbrowser.open(BILLING_URL)
+            self._stats_last_hash = None
+            self._refresh_stats()
+            self._show_step(3)
+            self._nav(0)
+            return
 
         if user_stopped:
             self._set_phase("Stopped")

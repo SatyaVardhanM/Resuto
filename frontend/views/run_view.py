@@ -228,6 +228,20 @@ class RunMixin:
         ctk.CTkLabel(row, text="0 = unlimited", font=F("small"),
                      text_color=FG_DIM).grid(row=2, column=2, sticky="w", pady=(3,0))
 
+        # Estimated Claude cost — Anthropic has no balance API, so show what
+        # this run will roughly cost and let the user check their balance
+        cost_row = ctk.CTkFrame(c, fg_color="transparent")
+        cost_row.pack(fill="x", padx=16, pady=(0, 12))
+        self._cost_lbl = ctk.CTkLabel(cost_row, text="", font=F("small"),
+                                      text_color=FG_DIM, justify="left",
+                                      anchor="w", wraplength=360)
+        self._cost_lbl.pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(cost_row, text="Check my balance", width=130, height=28,
+                      font=F("small"), fg_color=BG_FIELD, hover_color=BG_HOVER,
+                      command=self._open_billing).pack(side="right")
+        self._maxjobs_var.trace_add("write", lambda *_: self._update_cost_estimate())
+        self._update_cost_estimate()
+
         ctk.CTkFrame(c, height=1, fg_color=BG_HOVER).pack(fill="x", padx=16)
         ctk.CTkLabel(c,
                      text="Job preferences (experience level, job type, workplace, easy apply) are set in the Settings tab.",
@@ -245,6 +259,41 @@ class RunMixin:
                       command=lambda: self._show_step(0)).pack(side="left")
         ctk.CTkButton(nav, text="Analyse my profile",
                       command=self._s2_next).pack(side="right")
+
+    # ── Cost estimate ─────────────────────────────────────────────
+    def _open_billing(self):
+        import webbrowser
+        from core.costs import BILLING_URL
+        webbrowser.open(BILLING_URL)
+
+    def _update_cost_estimate(self):
+        try:
+            from core.costs import estimate_run
+            est = estimate_run(self._maxjobs_var.get().strip() or 5, roles=1)
+            basis = ("Based on your recent runs." if est["learned"]
+                     else "Rough estimate — gets more accurate after a few runs.")
+            self._cost_lbl.configure(
+                text="Estimated Claude cost: ~$%.2f per role searched (up to $%.2f)\n%s"
+                     % (est["typical"], est["high"], basis))
+        except Exception:
+            self._cost_lbl.configure(text="")
+
+    def _confirm_run_cost(self, roles: int) -> bool:
+        """Show the estimated cost of this run and ask to continue."""
+        try:
+            from core.costs import estimate_run
+            est = estimate_run(self._maxjobs_var.get().strip() or 5, roles=roles)
+        except Exception:
+            return True   # never block a run because the estimate failed
+        basis = ("Based on the real cost of your recent runs." if est["learned"]
+                 else "Rough estimate — it gets more accurate after a few runs.")
+        msg = ("This run searches %d role(s), up to %d job(s) each.\n\n"
+               "Estimated Anthropic cost: about $%.2f (up to $%.2f).\n%s\n\n"
+               "Make sure your Anthropic credit balance covers this.\n"
+               "(\"Check my balance\" on the previous screen opens the billing page.)\n\n"
+               "Start the run?"
+               % (est["roles"], est["per_role"], est["typical"], est["high"], basis))
+        return messagebox.askokcancel("Estimated cost", msg)
 
     def _s2_next(self):
         self._show_step(2)
@@ -702,6 +751,11 @@ class RunMixin:
             self._set_status("Search mode: %s — %d role(s) to search" % (mode, len(selected)))
         if not selected:
             messagebox.showwarning("No Roles","Select at least one role."); return
+
+        # Show the estimated Claude cost before anything starts
+        if not self._confirm_run_cost(len(selected)):
+            self._set_status("Run cancelled.")
+            return
 
         # ── Stop any previous run that is still alive ─────────────
         # After a run completes the browser is minimized but the subprocess

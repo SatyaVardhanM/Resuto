@@ -71,6 +71,12 @@ from core.settings import get_settings, out_path
 from core.config import AI_MODEL, MAX_JOBS_PER_RUN, DEFAULT_LOCATION
 from core.logger import log, log_warn, log_error, log_section, log_debug, LOG_FILE
 
+# Record the token cost of every Claude call, and stop the run on the first
+# "credit balance is too low" error (see core/costs.py)
+from core.costs import (install_usage_tracking, set_run, finish_run,
+                        run_cost, CreditBalanceError, BILLING_URL)
+install_usage_tracking(fail_fast=True)
+
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 # Set at main() start — used by run_applications()
@@ -730,6 +736,7 @@ async def run_phase2_only(job_ids: list = None, gui_mode: bool = True):
     from datetime import datetime as _dt
     global SESSION_START
     SESSION_START = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+    set_run(SESSION_START)
 
     # Lazy imports — resolved here so module-level import never crashes
     try:
@@ -810,6 +817,7 @@ async def main(gui_args=None):
     from datetime import datetime as _dt
     global SESSION_START
     SESSION_START = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+    set_run(SESSION_START)
     log_section("Bot started")
     log("Log file: %s" % LOG_FILE)
     log("Session start: %s" % SESSION_START)
@@ -1174,6 +1182,9 @@ async def main(gui_args=None):
 
         print("\n" + "=" * 50)
         print("[OK] Session complete.")
+        # Record cost now — the user may close the browser/app while the
+        # bot waits below, and a terminated process records nothing
+        _finish_cost_tracking()
         print("[BOT_IDLE]")
         print("=" * 50, flush=True)
 
@@ -1223,17 +1234,64 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _session_resume_count() -> int:
+    """Resumes generated in this session (for learning cost per job)."""
+    if not SESSION_START:
+        return 0
+    try:
+        import db.tracker as _t
+        conn = _t._connect()
+        try:
+            row = conn.execute(
+                f"SELECT COUNT(*) FROM {_t.TABLE} "
+                f"WHERE resume_ready = 1 AND logged_at >= ?",
+                (SESSION_START,)).fetchone()
+            return int(row[0] or 0)
+        finally:
+            conn.close()
+    except Exception:
+        return 0
+
+
+_COST_DONE = False
+
+
+def _finish_cost_tracking() -> None:
+    """Record the run's resume count and print its cost (once per run)."""
+    global _COST_DONE
+    if not SESSION_START or _COST_DONE:
+        return
+    _COST_DONE = True
+    try:
+        jobs = _session_resume_count()
+        finish_run(SESSION_START, jobs)
+        cost = run_cost(SESSION_START)
+        print("[COST] This run used about $%.2f of Anthropic credit (%d resume(s))."
+              % (cost, jobs), flush=True)
+        log("Run cost: $%.4f for %d resume(s)" % (cost, jobs))
+    except Exception as e:
+        log_warn("Cost tracking summary failed: %s" % e)
+
+
 def run_from_argv(argv=None) -> None:
     """Parse bot flags and run the requested mode."""
     args, _ = build_arg_parser().parse_known_args(argv)
 
-    # Phase 2 only mode — manual resume generation from History tab
-    if args.phase2_only:
-        asyncio.run(run_phase2_only(
-            job_ids=args.job_ids or None,
-            gui_mode=args.gui))
-    else:
-        asyncio.run(main(gui_args=args if args.gui else None))
+    try:
+        # Phase 2 only mode — manual resume generation from History tab
+        if args.phase2_only:
+            asyncio.run(run_phase2_only(
+                job_ids=args.job_ids or None,
+                gui_mode=args.gui))
+        else:
+            asyncio.run(main(gui_args=args if args.gui else None))
+    except CreditBalanceError as e:
+        # Exit code 3 = out of Anthropic credit (the GUI shows a dialog)
+        print("[BILLING] " + str(e), flush=True)
+        log_error("Stopped: Anthropic credit balance too low")
+        _finish_cost_tracking()
+        sys.exit(3)
+    _finish_cost_tracking()
 
 
 if __name__ == "__main__":
