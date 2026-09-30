@@ -451,17 +451,33 @@ class SettingsMixin:
         self._app_mode_var = ctk.StringVar(
             value=prefs.get("application_mode", "continuous"))
         modes = [
-            ("⚡  Auto (continuous)", "continuous"),
-            ("👁  One at a time",     "one_at_a_time"),
+            ("Prepare all first", "continuous"),
+            ("One job at a time", "one_at_a_time"),
         ]
+        _mode_help = {
+            "continuous":    "Prepare all first: makes a tailored resume for every matched "
+                             "job, then you apply to each one in a row. Fast once it starts, "
+                             "but resumes are also made for jobs you end up skipping.",
+            "one_at_a_time": "One job at a time: you see each job first and decide. A resume "
+                             "is only made when you click \"Tailor resume & apply\" — no "
+                             "Claude cost for jobs you skip. Continues until you click Finish "
+                             "or reach Max applications.",
+        }
+        self._mode_help_var = ctk.StringVar(
+            value=_mode_help.get(self._app_mode_var.get(), ""))
+
+        def _on_mode():
+            self._mode_help_var.set(_mode_help.get(self._app_mode_var.get(), ""))
+            self._save_job_prefs()
+
         for _lbl, _val in modes:
             ctk.CTkRadioButton(
                 mode_row, text=_lbl, variable=self._app_mode_var, value=_val,
-                font=F("small"), command=self._save_job_prefs,
+                font=F("small"), command=_on_mode,
             ).pack(side="left", padx=6)
-        ctk.CTkLabel(pref_card,
-                     text="One at a time: bot pauses on each job and waits for you to click Apply or Skip.",
-                     font=F("tiny"), text_color=MUTED
+        ctk.CTkLabel(pref_card, textvariable=self._mode_help_var,
+                     font=F("tiny"), text_color=MUTED, wraplength=640,
+                     justify="left", anchor="w"
                      ).grid(row=14, column=0, columnspan=3, sticky="w",
                              padx=16, pady=(0, 8))
 

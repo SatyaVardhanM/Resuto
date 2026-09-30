@@ -662,6 +662,8 @@ class RunMixin:
         f.grid_rowconfigure(0, weight=1)
         inner = ctk.CTkFrame(f, fg_color="transparent")
         inner.place(relx=0.5, rely=0.35, anchor="center")
+        self._run_inner = inner
+        self._p3_card = None
         self._run_phase_lbl = ctk.CTkLabel(inner, text="Bot is running...",
                                             font=F("heading"), text_color=FG)
         self._run_phase_lbl.pack(pady=(0,8))
@@ -1052,92 +1054,149 @@ class RunMixin:
     # Uses the run tab's _action_bar + attention card (same widgets as the
     # d/s/q prompt in history_view). The answers match what
     # backend.browser.apply_to_job accepts: "applied" / "skip" / "stop".
-    def _show_apply_card(self, data: dict):
-        title   = str(data.get("title") or "Unknown role")
-        company = str(data.get("company") or "")
-        score   = data.get("score") or 0
-        idx     = int(data.get("index") or 1)
-        total   = int(data.get("total") or 1)
-        resume  = str(data.get("resume") or "")
-        url     = str(data.get("url") or "")
-        opened  = bool(data.get("opened"))
+    # One card for every Phase 3 question, with its buttons INSIDE it.
+    def _ensure_p3_card(self):
+        if getattr(self, "_p3_card", None) is not None:
+            return
+        f = self._steps[4]
+        c = ctk.CTkFrame(f, fg_color=BG_CARD, corner_radius=12,
+                         border_color=ACCENT, border_width=2)
+        self._p3_card    = c
+        self._p3_title   = ctk.CTkLabel(c, text="", font=F("heading"), text_color=FG,
+                                        wraplength=640, justify="center")
+        self._p3_company = ctk.CTkLabel(c, text="", font=F("body"), text_color=FG_SOFT)
+        self._p3_meta    = ctk.CTkLabel(c, text="", font=F("small"), text_color=FG_DIM)
+        self._p3_reason  = ctk.CTkLabel(c, text="", font=F("small"), text_color=FG_SOFT,
+                                        wraplength=640, justify="left")
+        self._p3_status  = ctk.CTkLabel(c, text="", font=F("small"), text_color=WARNING,
+                                        wraplength=640, justify="center")
+        self._p3_btns    = ctk.CTkFrame(c, fg_color="transparent")
+        self._p3_links   = ctk.CTkFrame(c, fg_color="transparent")
+        self._p3_title.pack(padx=24, pady=(18, 0))
+        self._p3_company.pack(padx=24, pady=(2, 0))
+        self._p3_meta.pack(padx=24, pady=(6, 0))
+        self._p3_reason.pack(padx=24, pady=(10, 0))
+        self._p3_status.pack(padx=24, pady=(10, 0))
+        self._p3_btns.pack(padx=24, pady=(14, 4))
+        self._p3_links.pack(padx=24, pady=(0, 16))
 
-        self._current_phase = 3
-        self._set_phase("Phase 3 — Job %d of %d" % (idx, total))
-        self._run_phase_lbl.configure(text="Your turn — apply in the browser")
-        self._run_sub_lbl.configure(text="Job %d of %d" % (idx, total))
-
-        applied = data.get("applied")
-        limit   = data.get("limit")
-        head = "%s @ %s" % (title, company) if company else title
-        if applied is not None and limit:
-            prog = "Applied %d of %d   •   Job %d of %d in queue" % (applied, limit, idx, total)
-        elif applied is not None:
-            prog = "Applied %d   •   Job %d of %d in queue" % (applied, idx, total)
-        else:
-            prog = "Job %d of %d" % (idx, total)
-        sub  = "Match %s%%   •   %s" % (score, prog)
-        if resume:
-            sub += "\nResume: %s" % os.path.basename(resume)
-        sub += ("\n\nThe job is open in the bot's browser. Apply there, then choose below."
-                if opened else
-                "\n\nCouldn't open the job page automatically — try \"Show job again\".")
-        self._attention_hl.configure(text=head)
-        self._attention_sub.configure(text=sub, justify="center")
-        self._attention_card.place(relx=0.5, rely=0.62, anchor="center", relwidth=0.85)
-
-        for w in self._action_bar.winfo_children():
-            w.destroy()
-        row = ctk.CTkFrame(self._action_bar, fg_color="transparent")
-        row.pack(fill="x", padx=16, pady=10)
-        for txt, val, col, hov in (("✓  Applied", "applied", SUCCESS, "#1a9e4a"),
-                                   ("Skip",       "skip",    BG_FIELD, BG_HOVER),
-                                   ("Stop",       "stop",    DANGER,   "#C0392B")):
-            ctk.CTkButton(row, text=txt, fg_color=col, hover_color=hov,
-                          height=36, width=120, font=F("label"),
+    def _p3_show(self, title, company="", meta="", reason="", status="",
+                 buttons=(), links=()):
+        """buttons: (text, value, style) — style primary/success/neutral.
+        links: (text, callback) — small outlined buttons."""
+        self._ensure_p3_card()
+        self._hide_action_bar()           # legacy d/s/q bar, if it was up
+        self._p3_title.configure(text=title)
+        self._p3_company.configure(text=company)
+        self._p3_meta.configure(text=meta)
+        self._p3_reason.configure(text=reason)
+        self._p3_status.configure(text=status)
+        for fr in (self._p3_btns, self._p3_links):
+            for w in fr.winfo_children():
+                w.destroy()
+        styles = {"primary": (ACCENT, ACCENT_HV), "success": (SUCCESS, "#1a9e4a"),
+                  "neutral": (BG_FIELD, BG_HOVER)}
+        for txt, val, st in buttons:
+            fg, hv = styles.get(st, styles["neutral"])
+            ctk.CTkButton(self._p3_btns, text=txt, fg_color=fg, hover_color=hv,
+                          height=38, width=170 if st != "neutral" else 130,
+                          font=F("label"),
                           command=lambda v=val: self._answer_apply(v)
-                          ).pack(side="left", padx=(0, 8))
-        if resume:
-            ctk.CTkButton(row, text="Open resume folder", height=36,
-                          fg_color=BG_CARD, hover_color=BG_HOVER, font=F("small"),
-                          command=lambda p=resume: self._open_folder(p)
-                          ).pack(side="right", padx=(8, 0))
-        if url:
-            # Brings the BOT's browser back to this job (not the default browser)
-            ctk.CTkButton(row, text="Show job again", height=36,
-                          fg_color=BG_CARD, hover_color=BG_HOVER, font=F("small"),
-                          command=lambda: self._runner and self._runner.send("reopen")
-                          ).pack(side="right", padx=(8, 0))
-        self._action_bar.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 8))
-        self._set_status("Waiting for you: %s" % head[:70])
+                          ).pack(side="left", padx=5)
+        for txt, cb in links:
+            ctk.CTkButton(self._p3_links, text=txt, command=cb, height=30,
+                          fg_color="transparent", hover_color=BG_HOVER,
+                          border_width=1, border_color=MUTED,
+                          text_color=FG_SOFT, font=F("small")
+                          ).pack(side="left", padx=5)
+        self._run_inner.place_configure(rely=0.12)
+        self._p3_card.place(relx=0.5, rely=0.55, anchor="center", relwidth=0.8)
+        self._step_lbl.configure(text="Waiting for you")
+        self._run_sub_lbl.configure(text="")
         self._nav(0)
+
+    def _p3_progress(self, data: dict) -> str:
+        applied, limit = data.get("applied"), data.get("limit")
+        idx, total = int(data.get("index") or 1), int(data.get("total") or 1)
+        where = ("Job %d of %d in queue" if data.get("mode", "queue") == "queue"
+                 else "Match %d of %d this run") % (idx, total)
+        if applied is None:
+            return where
+        done = ("Applied %d of %d" % (applied, limit)) if limit else ("Applied %d" % applied)
+        return "%s   •   %s" % (done, where)
+
+    def _p3_common(self, data: dict, phase_word: str):
+        idx, total = int(data.get("index") or 1), int(data.get("total") or 1)
+        self._current_phase = 3
+        self._set_phase("Phase 3 — %s %d of %d" % (phase_word, idx, total))
+        self._run_phase_lbl.configure(text="Your turn")
+
+    def _reopen_links(self, url: str):
+        return [("Show job again",
+                 lambda: self._runner and self._runner.send("reopen"))] if url else []
+
+    def _show_decide_card(self, data: dict):
+        """One job at a time, step 1: decide BEFORE a resume is made."""
+        self._p3_common(data, "Job")
+        url = str(data.get("url") or "")
+        reason = str(data.get("reason") or "").strip()
+        if len(reason) > 420:
+            reason = reason[:420].rsplit(" ", 1)[0] + "…"
+        self._p3_show(
+            title=str(data.get("title") or "Unknown role"),
+            company=str(data.get("company") or ""),
+            meta="Match %s%%   •   %s" % (data.get("score") or 0, self._p3_progress(data)),
+            reason=reason,
+            status=("The job is open in the bot's browser. Want a tailored resume for it?"
+                    if data.get("opened") else
+                    "Couldn't open the job page automatically — try \"Show job again\"."),
+            buttons=[("Tailor resume & apply", "tailor", "primary"),
+                     ("Skip", "skip", "neutral"),
+                     ("Finish", "finish", "neutral")],
+            links=self._reopen_links(url))
+        self._set_status("Decide: tailor a resume for %s?" % str(data.get("title"))[:60])
+
+    def _show_apply_card(self, data: dict):
+        """Resume is ready: apply in the browser, then Applied / Didn't apply."""
+        self._p3_common(data, "Job")
+        url    = str(data.get("url") or "")
+        resume = str(data.get("resume") or "")
+        res_txt = ""
+        if resume:
+            res_txt = "Resume: %s\\%s" % (os.path.basename(os.path.dirname(resume)),
+                                          os.path.basename(resume))
+        links = []
+        if resume:
+            links.append(("Preview resume", lambda p=resume: self._open_file(p)))
+            links.append(("Open folder", lambda p=resume: self._open_folder(p)))
+        links += self._reopen_links(url)
+        self._p3_show(
+            title=str(data.get("title") or "Unknown role"),
+            company=str(data.get("company") or ""),
+            meta="Match %s%%   •   %s" % (data.get("score") or 0, self._p3_progress(data)),
+            reason=res_txt,
+            status=("Apply in the bot's browser, then tell Resuto what you did."
+                    if data.get("opened") else
+                    "Couldn't open the job page automatically — try \"Show job again\"."),
+            buttons=[("✓  Applied", "applied", "success"),
+                     ("Didn't apply", "skip", "neutral"),
+                     ("Finish", "stop", "neutral")],
+            links=links)
+        self._set_status("Waiting for you: %s" % str(data.get("title"))[:60])
 
     def _show_limit_card(self, data: dict):
         limit = int(data.get("limit") or 0)
         left  = int(data.get("left") or 0)
         self._run_phase_lbl.configure(text="Limit reached")
-        self._attention_hl.configure(
-            text="You've reached your limit of %d application%s"
-                 % (limit, "" if limit == 1 else "s"))
-        self._attention_sub.configure(
-            text="%d more job%s ready to apply. Continue applying?"
-                 % (left, " is" if left == 1 else "s are"), justify="center")
-        self._attention_card.place(relx=0.5, rely=0.62, anchor="center", relwidth=0.85)
-        for w in self._action_bar.winfo_children():
-            w.destroy()
-        row = ctk.CTkFrame(self._action_bar, fg_color="transparent")
-        row.pack(fill="x", padx=16, pady=10)
-        ctk.CTkButton(row, text="Continue applying", fg_color=SUCCESS,
-                      hover_color="#1a9e4a", height=36, width=160, font=F("label"),
-                      command=lambda: self._answer_apply("continue")
-                      ).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(row, text="Finish", fg_color=BG_FIELD, hover_color=BG_HOVER,
-                      height=36, width=120, font=F("label"),
-                      command=lambda: self._answer_apply("finish")
-                      ).pack(side="left")
-        self._action_bar.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 8))
+        self._p3_show(
+            title="You've reached your limit of %d application%s"
+                  % (limit, "" if limit == 1 else "s"),
+            reason="",
+            status="%d more job%s ready. Continue applying?"
+                   % (left, " is" if left == 1 else "s are"),
+            buttons=[("Continue applying", "continue", "success"),
+                     ("Finish", "finish", "neutral")])
         self._set_status("Limit reached — continue or finish?")
-        self._nav(0)
 
     def _start_apply_queue(self):
         """Go through queued jobs (resume ready) without scanning LinkedIn."""
@@ -1176,13 +1235,33 @@ class RunMixin:
     def _answer_apply(self, val: str):
         if self._runner:
             self._runner.send(val)
+        if val == "tailor":
+            # Keep the card; the resume takes a little while
+            for fr in (self._p3_btns, self._p3_links):
+                for w in fr.winfo_children():
+                    w.destroy()
+            self._p3_status.configure(text="Tailoring your resume for this job…  (about 30–60 s)")
+            self._set_status("Tailoring resume...")
+            return
         self._hide_action_panel()
         self._run_phase_lbl.configure(text="Bot is running...")
+        self._step_lbl.configure(text="Running...")
         self._set_status({"applied":  "Marked as applied — next job...",
                           "skip":     "Skipped — next job...",
-                          "stop":     "Stopping...",
+                          "stop":     "Finishing the run...",
                           "continue": "Continuing with the queued jobs...",
                           "finish":   "Finishing the run..."}.get(val, ""))
+
+    def _open_file(self, path: str):
+        try:
+            if sys.platform == "win32":
+                os.startfile(path)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", path])
+            else:
+                subprocess.Popen(["xdg-open", path])
+        except Exception as e:
+            messagebox.showerror("Open resume", "Could not open:\n%s\n\n%s" % (path, e))
 
     def _open_folder(self, path: str):
         folder = path if os.path.isdir(path) else os.path.dirname(path)
@@ -1197,11 +1276,17 @@ class RunMixin:
             messagebox.showerror("Open folder", "Could not open:\n%s\n\n%s" % (folder, e))
 
     def _hide_action_panel(self):
-        """Hide the Phase 3 card / action bar."""
+        """Hide the Phase 3 card (and the legacy d/s/q bar)."""
         try:
-            self._hide_action_bar()   # history_view: hides bar + attention card
+            self._hide_action_bar()
         except Exception:
             pass
+        if getattr(self, "_p3_card", None) is not None:
+            self._p3_card.place_forget()
+            try:
+                self._run_inner.place_configure(rely=0.35)
+            except Exception:
+                pass
 
     def _poll(self):
         try:
@@ -1261,6 +1346,14 @@ class RunMixin:
                 self._run_summary = json.loads(s[len("BOT_SUMMARY:"):].strip())
             except Exception:
                 self._run_summary = {}
+            return
+
+        # ── One job at a time: decide before a resume is made ──────
+        if s.startswith("BOT_DECIDE:"):
+            try:
+                self._show_decide_card(json.loads(s[len("BOT_DECIDE:"):].strip()))
+            except Exception as e:
+                self._append_error("Could not show the job card: %s" % e)
             return
 
         # ── Phase 3: bot opened a job and waits for Applied/Skip/Stop ──

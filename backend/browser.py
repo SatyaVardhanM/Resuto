@@ -634,8 +634,70 @@ async def _ask_user_choice(prompt: str, valid: tuple) -> str:
             return answer
         print(f"   [WARN]  Please type one of: {', '.join(valid)}")
 
+async def decide_job(context, job: dict, index: int = 1, total: int = 1,
+                     applied: int = None, limit: int = None) -> str:
+    """
+    One-job-at-a-time, step 1: open the job and let the user DECIDE before
+    any resume is made (the resume is the expensive Claude call).
+    Prints BOT_DECIDE {json}; answers: "tailor" / "skip" / "finish" / "reopen".
+    Returns "tailor", "skipped" or "finish".
+    """
+    import json as _json
+    from db import tracker
+
+    title   = job.get("job_title") or job.get("title") or "Unknown role"
+    company = job.get("company") or "Unknown company"
+    url     = job.get("job_url") or job.get("url") or ""
+    page, opened = None, False
+    if url:
+        try:
+            page = await _setup_page(context)
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            opened = True
+        except Exception as e:
+            err = str(e).lower()
+            if any(x in err for x in ("target closed", "browser has been closed",
+                                       "context was destroyed", "connection closed")):
+                print("   [OK] Browser was closed -- stopping.", flush=True)
+                return "finish"
+            print(f"   [WARN]  Could not open the job page: {e}", flush=True)
+
+    print("BOT_DECIDE: " + _json.dumps({
+        "title": title, "company": company, "url": url,
+        "score": job.get("match_score") or 0,
+        "overlap": job.get("skill_overlap") or 0,
+        "reason": (job.get("ai_reason") or "")[:600],
+        "index": index, "total": total, "opened": opened,
+        "applied": applied, "limit": limit,
+    }), flush=True)
+
+    while True:
+        choice = await _ask_user_choice(
+            "   [WAIT] Tailor a resume for this job / Skip / Finish:",
+            ("finish", "tailor", "skip", "reopen"))       # EOF → "finish"
+        if choice != "reopen":
+            break
+        try:
+            if page is None or page.is_closed():
+                page = await _setup_page(context)
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await page.bring_to_front()
+        except Exception as e:
+            print(f"   [WARN]  Could not reopen the job page: {e}", flush=True)
+
+    if choice == "skip":
+        tracker.mark_job_outcome(job["id"], "skipped")
+        print("   [SKIP]  Marked as skipped.", flush=True)
+        return "skipped"
+    if choice == "finish":
+        print("   [STOP] Finished by you.", flush=True)
+        return "finish"
+    return "tailor"
+
+
 async def apply_to_job(context, job: dict, index: int = 1, total: int = 1,
-                       applied: int = None, limit: int = None) -> str:
+                       applied: int = None, limit: int = None,
+                       mode: str = "queue", reopen_page: bool = True) -> str:
     """
     Phase 3, ONE question per job:
       1. open the job page in the bot's browser,
@@ -656,7 +718,14 @@ async def apply_to_job(context, job: dict, index: int = 1, total: int = 1,
 
     opened = False
     page = None
-    if url:
+    if url and not reopen_page:
+        # Already open from the decide step — don't reload the page
+        try:
+            page = await _setup_page(context)
+            opened = True
+        except Exception:
+            pass
+    elif url:
         try:
             page = await _setup_page(context)
             await page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -672,7 +741,7 @@ async def apply_to_job(context, job: dict, index: int = 1, total: int = 1,
     print("BOT_APPLY: " + _json.dumps({
         "title": title, "company": company, "url": url, "score": score,
         "resume": resume, "index": index, "total": total, "opened": opened,
-        "applied": applied, "limit": limit,
+        "applied": applied, "limit": limit, "mode": mode,
     }), flush=True)
     log("Waiting for user: %s @ %s (%d/%d)" % (title, company, index, total))
 

@@ -638,13 +638,16 @@ async def run_applications(
         return applied_total
 
     if application_mode == "one_at_a_time":
-        # ── One-by-one mode ──────────────────────────────────────
-        # Generate resume for ONE job at a time, pause for user action
-        print("\n[>>] One-by-one mode: generating and applying one job at a time.")
-        remaining = max_jobs if not unlimited else 9999
+        # ── One job at a time ────────────────────────────────────
+        # Decide FIRST, tailor only if the user wants to apply:
+        #   1. open the job + card (match, Claude's reason) → Tailor / Skip / Finish
+        #   2. "Tailor" → make this job's resume → Applied / Didn't apply / Finish
+        # Keeps going until Finish or the application limit (the user may
+        # continue past the limit).
+        print("\n[>>] One job at a time: you decide before a resume is made.")
+        from backend.browser import decide_job
 
-        # Only jobs matched in THIS session — previously every 'matched' row
-        # in the whole history was pulled in and got a resume generated.
+        # Only jobs matched in THIS session
         import db.tracker as _t2
         conn = _t2._connect()
         try:
@@ -658,14 +661,30 @@ async def run_applications(
         finally:
             conn.close()
 
+        limit    = None if unlimited else max_jobs
+        no_limit = unlimited
+        total    = len(all_matched)
         for idx, job in enumerate(all_matched, 1):
-            if remaining <= 0:
-                print("[>>] Applied to %d job(s). Limit reached." % max_jobs)
-                break
+            if not no_limit and applied_total >= max_jobs:
+                left = total - idx + 1
+                print("[>>] Applied to %d job(s). Limit reached." % applied_total, flush=True)
+                if await _ask_continue_after_limit(max_jobs, left):
+                    no_limit = True
+                else:
+                    break
 
-            # Generate resume for this single job
-            print("\n[>>] Generating resume for: %s @ %s"
-                  % (job.get("job_title","?"), job.get("company","?")))
+            decision = await decide_job(context, job, idx, total,
+                                        applied=applied_total, limit=limit)
+            if decision == "finish":
+                _STATE["stop"] = True
+                break
+            if decision == "skipped":
+                _STATE["skipped"] += 1
+                continue
+
+            # The user wants this one — tailor its resume now
+            print("\n[>>] Tailoring resume for: %s @ %s"
+                  % (job.get("job_title", "?"), job.get("company", "?")), flush=True)
             await loop.run_in_executor(
                 None,
                 batch_generate_resumes,
@@ -685,16 +704,19 @@ async def run_applications(
                 job = dict(row) if row else job
             finally:
                 conn2.close()
+            if not job.get("resume_ready"):
+                print("   [ERR] Resume could not be generated for this job — moving on.",
+                      flush=True)
+                continue
 
-            # Open the job page, then ONE question: Applied / Skip / Stop
-            outcome = await apply_to_job(
-                context, job, idx, len(all_matched),
-                applied=applied_total, limit=None if unlimited else max_jobs)
+            # Same job page stays open → Applied / Didn't apply / Finish
+            outcome = await apply_to_job(context, job, idx, total,
+                                         applied=applied_total, limit=limit,
+                                         mode="run", reopen_page=False)
             if outcome == "applied":
                 applied_total += 1
-                remaining     -= 1
                 _STATE["applied"] += 1
-                print("[>>] Applied. Remaining: %d" % remaining)
+                print("[>>] Applied (%d so far)." % applied_total)
             elif outcome == "skipped":
                 _STATE["skipped"] += 1
             elif outcome == "stop":
@@ -1078,17 +1100,8 @@ async def main(gui_args=None):
         print("[OK] Apply mode: %s" % apply_mode)
         print("[OK] Application mode: %s" % application_mode)
 
-        # In one-at-a-time mode, check if total limit already reached
-        if application_mode == "one_at_a_time" and not unlimited:
-            import db.tracker as _t
-            total_so_far = _t.count_applied_total()
-            if total_so_far >= max_jobs:
-                print("[>>] One-at-a-time: already applied to %d/%d jobs. Limit reached."
-                      % (total_so_far, max_jobs))
-                return
-            remaining_jobs = max_jobs - total_so_far
-            print("[>>] One-at-a-time: %d/%d applied so far. %d remaining."
-                  % (total_so_far, max_jobs, remaining_jobs))
+        # (The old all-time check — "already applied to N jobs ever, so
+        # refuse to run" — is gone: the limit now counts THIS run.)
     else:
         apply_mode       = get_apply_mode()
         application_mode = "continuous"   # CLI always runs continuous
@@ -1155,11 +1168,6 @@ async def main(gui_args=None):
         for role_index, job_keyword in enumerate(selected_roles, 1):
             if _STATE["stop"]:
                 print("\n[>>] Stopped by you — no more roles will be searched.")
-                break
-
-            # One at a time mode — stop after first successful application
-            if application_mode == "one_at_a_time" and applied_total > prev_applied:
-                print("\n[>>] One-at-a-time mode: applied to 1 job. Click Start Bot for next.")
                 break
 
             if not unlimited and applied_total >= max_jobs:

@@ -152,3 +152,47 @@ def test_bot_parser_has_apply_queue():
     from backend.orchestrator import build_arg_parser
     a, _ = build_arg_parser().parse_known_args(["--gui", "--apply-queue"])
     assert a.apply_queue
+
+
+# ── One job at a time: decide BEFORE the resume is made ───────────
+def _run_decide(monkeypatch, capsys, answer):
+    import backend.browser as b
+    import db.tracker as t
+    outcomes = []
+    monkeypatch.setattr(t, "mark_job_outcome", lambda rid, st: outcomes.append((rid, st)))
+    _real_sleep = asyncio.sleep
+    monkeypatch.setattr(b.asyncio, "sleep", lambda *_: _real_sleep(0))
+    monkeypatch.setattr(builtins, "input", lambda *_: answer)
+    job = {"id": 9, "job_title": "SDET", "company": "Beta",
+           "job_url": "https://www.linkedin.com/jobs/view/9/",
+           "match_score": 77, "ai_reason": "Strong C# overlap"}
+    res = asyncio.run(b.decide_job(_Ctx(), job, 1, 3, applied=0, limit=5))
+    out = capsys.readouterr().out
+    line = [l for l in out.splitlines() if l.startswith("BOT_DECIDE:")][0]
+    return res, outcomes, json.loads(line[len("BOT_DECIDE:"):])
+
+
+def test_decide_card_answers_match_bot(monkeypatch, capsys):
+    res, outc, data = _run_decide(monkeypatch, capsys, "tailor")
+    assert res == "tailor" and outc == []                 # nothing marked yet
+    assert data["score"] == 77 and data["limit"] == 5 and "resume" not in data
+    res, outc, _ = _run_decide(monkeypatch, capsys, "skip")
+    assert res == "skipped" and outc == [(9, "skipped")]
+    res, outc, _ = _run_decide(monkeypatch, capsys, "finish")
+    assert res == "finish" and outc == []
+
+
+def test_gui_handles_decide_step():
+    src = open(os.path.join(ROOT, "frontend", "views", "run_view.py"), encoding="utf-8").read()
+    assert "BOT_DECIDE:" in src and '"tailor"' in src and '"finish"' in src
+
+
+def test_one_at_a_time_tailors_only_after_decision():
+    """In the orchestrator, resume generation must come after decide_job."""
+    src = open(os.path.join(ROOT, "backend", "orchestrator.py"), encoding="utf-8").read()
+    i_dec = src.find("decide_job(")
+    assert i_dec > 0
+    i_gen = src.find("batch_generate_resumes,", i_dec)   # run_in_executor call
+    assert i_gen > i_dec
+    assert 'decision != "tailor"' in src or "decision == \"tailor\"" in src \
+        or src.find("continue", i_dec) < i_gen
