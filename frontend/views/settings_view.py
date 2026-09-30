@@ -209,6 +209,25 @@ class SettingsMixin:
             command=self._regenerate_prompts_manual
         ).pack(side="left", padx=(8, 0))
 
+        # ══ SECTION 1b: RESUME LENGTH ═════════════════════════════
+        section_label("Resume Length")
+        len_card = section_card()
+        from api.resume_length import get_setting as _len_setting
+        _len_labels = {"auto": "Auto", "1": "1 page", "2": "Up to 2 pages"}
+        _len_values = {v: k for k, v in _len_labels.items()}
+        self._len_var = ctk.StringVar(value=_len_labels[_len_setting()])
+        ctk.CTkSegmentedButton(
+            len_card, values=list(_len_labels.values()),
+            variable=self._len_var, font=F("small"),
+            command=lambda v: self._save_resume_length(_len_values[v])
+        ).grid(row=0, column=0, sticky="w", padx=16, pady=(14, 6))
+        self._len_info_var = ctk.StringVar(value="")
+        ctk.CTkLabel(len_card, textvariable=self._len_info_var,
+                     font=F("small"), text_color=FG_DIM, anchor="w",
+                     justify="left", wraplength=560
+                     ).grid(row=1, column=0, sticky="w", padx=16, pady=(0, 14))
+        self._update_length_info()
+
         # ══ SECTION 2: BROWSER PROFILE ════════════════════════════
         section_label("Browser Profile")
         browser_card = section_card()
@@ -544,6 +563,35 @@ class SettingsMixin:
             from pathlib import Path
             return str(Path.home() / "Documents" / "Resuto" / "resume_data.xml")
 
+
+    # ── Resume length ─────────────────────────────────────────────
+    def _save_resume_length(self, value: str):
+        try:
+            from core.settings import update
+            update(resume_length=value)
+        except Exception as e:
+            print("[WARN] Could not save resume length: %s" % e)
+        self._update_length_info()
+        try:
+            self._refresh_start_status()
+        except Exception:
+            pass
+
+    def _update_length_info(self):
+        text = ("Each tailored resume is fitted to this length. Only that job's copy "
+                "is shortened — your profile keeps every bullet, and no role is ever "
+                "removed. Auto = 1 page under 5 years of experience, up to 2 pages from 5 years.")
+        try:
+            from core.profile import load_profile_from_xml
+            from api.resume_length import describe_target, profile_overview
+            prof = load_profile_from_xml(self._xml_path())
+            ov = profile_overview(prof)
+            text += ("\nYour profile: %.1f years • %d roles • %d bullets • about %.1f pages "
+                     "→ tailored resumes: %s." % (ov["years"], ov["roles"], ov["bullets"],
+                                                  ov["pages"], describe_target(prof)))
+        except Exception:
+            pass
+        self._len_info_var.set(text)
 
     def _toggle_key_visibility(self):
         self._key_visible = not self._key_visible

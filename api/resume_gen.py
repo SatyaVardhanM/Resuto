@@ -1134,6 +1134,16 @@ def batch_generate_resumes(profile: dict, output_dirs: dict,
                 print(f"      [WARN]  Summary mentions terms not in your profile: "
                       f"{', '.join(flagged)} -- review before applying.")
 
+            # 3b. Fit to the page limit (Settings → Resume length).
+            #     Only this job's COPY is trimmed — never the profile — and
+            #     no role is ever removed (see api/resume_length.py).
+            from api.resume_length import (target_pages, fit_to_pages,
+                                           pdf_page_count, estimate_pages,
+                                           summarize_left_out)
+            _target = target_pages(profile)
+            _full_tailored = tailored
+            tailored, _left_out = fit_to_pages(_full_tailored, profile, _target)
+
             # 3. Build DOCX
             docx_path = make_unique_filename(
                 company=company, title=title,
@@ -1151,6 +1161,23 @@ def batch_generate_resumes(profile: dict, output_dirs: dict,
                 log("  Step 4 complete: PDF written → %s" % pdf_path)
             else:
                 log_warn("  Step 4: PDF conversion skipped (Word/LibreOffice not found) — DOCX only")
+
+            # 4a. Real page count from the PDF — trim a little more if the
+            #     estimate was optimistic (a page break wastes a few lines)
+            _pages = pdf_page_count(pdf_path)
+            _extra = 0
+            while _pages is not None and _pages > _target and _extra < 12:
+                _extra += 2
+                tailored, _left_out = fit_to_pages(_full_tailored, profile,
+                                                   _target, extra_cuts=_extra)
+                build_resume_docx(profile, tailored, docx_path)
+                pdf_path = convert_to_pdf(docx_path, output_dirs["pdf"])
+                _pages = pdf_page_count(pdf_path)
+            _pg = (("%d page%s" % (_pages, "" if _pages == 1 else "s")) if _pages
+                   else "~%.1f pages (estimated)" % estimate_pages(tailored, profile))
+            _len_msg = "%s (limit %d) — %s" % (_pg, _target, summarize_left_out(_left_out))
+            print(f"      [LEN] {_len_msg}", flush=True)
+            log("Resume length for %s @ %s: %s" % (title, company, _len_msg))
 
             # 4b. Validation guardrail: check metrics + keywords present
             # If fails — rerun at temperature=0.3 to fix alignment

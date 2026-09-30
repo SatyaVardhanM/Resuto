@@ -427,6 +427,14 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
         # During a live run, _sched_stats also calls _load_history every 5s.
         if idx == 3:
             self._load_history()
+        # Keep the resume-length info current (profile may have changed)
+        try:
+            if idx == 0:
+                self._refresh_start_status()
+            elif idx == 4:
+                self._update_length_info()
+        except Exception:
+            pass
 
     # ── Run tab (wizard) ──────────────────────────────────────────
     # _build_run/_show_step → views/run_view.py

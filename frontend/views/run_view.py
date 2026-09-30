@@ -146,6 +146,19 @@ class RunMixin:
         self._start_key_dot = ctk.CTkLabel(
             status_row, text="", font=F("small"), text_color=MUTED)
         self._start_key_dot.pack()
+
+        # Resume length: current rule + a short rule-of-thumb tip
+        self._start_len_lbl = ctk.CTkLabel(
+            center, text="", font=F("small"), text_color=FG_DIM,
+            wraplength=460, justify="center")
+        self._start_len_lbl.pack(pady=(14, 0))
+        ctk.CTkLabel(
+            center,
+            text=("Tip: under 5 years' experience, 1 page works best; "
+                  "5+ years, up to 2 pages is normal.\n"
+                  "Change it in Settings → Resume Length."),
+            font=F("tiny"), text_color=MUTED, wraplength=460, justify="center"
+        ).pack(pady=(4, 0))
         self._refresh_start_status()
 
     def _refresh_start_status(self):
@@ -160,6 +173,18 @@ class RunMixin:
             text=("✓  API key ready" if has_key
                   else "✕  No API key — add in Settings"),
             text_color=SUCCESS if has_key else DANGER)
+        try:
+            txt = ""
+            if has_xml:
+                from core.profile import load_profile_from_xml
+                from api.resume_length import describe_target, profile_overview
+                prof = load_profile_from_xml(self._xml_path())
+                ov = profile_overview(prof)
+                txt = ("Resume length: %s  •  your profile ≈ %.1f pages (%.1f yrs)"
+                       % (describe_target(prof), ov["pages"], ov["years"]))
+            self._start_len_lbl.configure(text=txt)
+        except Exception:
+            pass
 
     def _start_pulse(self):
         """Pulse the start button border to draw attention."""
@@ -198,6 +223,33 @@ class RunMixin:
             self._nav(4)
             return
         self._start_err.configure(text="")
+
+        # Profile already longer than 2 pages → explain once per session
+        if not getattr(self, "_len_warned", False):
+            try:
+                from core.profile import load_profile_from_xml
+                from api.resume_length import (profile_overview, target_pages)
+                prof = load_profile_from_xml(str(xml))
+                ov   = profile_overview(prof)
+                if ov["pages"] > 2:
+                    self._len_warned = True
+                    tgt = target_pages(prof)
+                    msg = ("Your resume profile is long: %d roles and %d bullets — "
+                           "about %.1f pages.\n\n"
+                           "Each tailored resume is limited to %s, so a lot will be "
+                           "left out of every resume, and older roles will show only "
+                           "title, company and dates. Your profile itself is never "
+                           "changed.\n\n"
+                           "You can upload a shorter resume in Settings, or continue "
+                           "and let Resuto choose what fits for each job.\n\n"
+                           "Update your resume now?"
+                           % (ov["roles"], ov["bullets"], ov["pages"],
+                              "1 page" if tgt == 1 else "2 pages"))
+                    if messagebox.askyesno("Your resume profile is long", msg):
+                        self._nav(4)
+                        return
+            except Exception:
+                pass
         self._show_step(1)
 
 
