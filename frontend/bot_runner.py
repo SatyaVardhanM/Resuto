@@ -10,6 +10,10 @@ import subprocess
 import threading
 
 from frontend.constants import BOT_SCRIPT
+try:
+    from core.logger import redact as _redact
+except Exception:          # logging must never break the bot
+    def _redact(s): return s
 
 
 class BotRunner:
@@ -64,6 +68,6 @@ class BotRunner:
     def _read(self):
         try:
             for line in self._proc.stdout:
-                self._on_line(line.rstrip())
+                self._on_line(_redact(line.rstrip()))
         finally:
             self._on_done(self._proc.wait())

@@ -14,7 +14,7 @@ import json
 
 def _resuto_documents_dir() -> str:
     """
-    Returns Documents\Resuto\ — the user-visible home for all Resuto data.
+    Returns Documents\\Resuto\\ — the user-visible home for all Resuto data.
     Always accessible, never hidden, works on all Windows accounts.
     Falls back to home dir if Documents is unavailable.
     """
@@ -24,7 +24,19 @@ def _resuto_documents_dir() -> str:
         docs = pathlib.Path.home()
     base = docs / "Resuto"
     base.mkdir(parents=True, exist_ok=True)
+    _private(str(base), 0o700)
     return str(base)
+
+
+def _private(path: str, mode: int) -> None:
+    """macOS/Linux: make a file/folder readable by this user only.
+    (On Windows, Documents is already private to the signed-in user.)"""
+    if os.name != "posix":
+        return
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
 
 
 def _exe_dir() -> str:
@@ -164,8 +176,10 @@ def _load() -> dict:
 
 def _save(settings: dict) -> None:
     try:
-        with open(_settings_file(), "w", encoding="utf-8") as f:
+        path = _settings_file()
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(settings, f, indent=2)
+        _private(path, 0o600)
     except Exception as e:
         print("   [WARN] Could not save local_settings.json: %s" % e)
 

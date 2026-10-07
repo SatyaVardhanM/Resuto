@@ -76,6 +76,36 @@ class _LazyLogFile:
 
 LOG_FILE = _LazyLogFile()
 
+# ── Secret redaction ──────────────────────────────────────────────
+# Anything that looks like a key or token is masked before it reaches
+# bot.log, the console pipe or the GUI, so logs are safe to share.
+import re as _re
+_SECRET_PATTERNS = [
+    (_re.compile(r"sk-ant-[A-Za-z0-9_\-]{6,}"),               "sk-ant-***"),
+    (_re.compile(r"\bbot\d{6,12}:[A-Za-z0-9_\-]{30,}"),       "bot***"),
+    (_re.compile(r"\b\d{6,12}:AA[A-Za-z0-9_\-]{30,}"),         "***:***"),
+    (_re.compile(r"\b(?:ghp|gho|ghs|ghu)_[A-Za-z0-9]{20,}"),     "gh_***"),
+    (_re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"),            "github_pat_***"),
+    (_re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{16,}"),       r"\1***"),
+    (_re.compile(r"(?i)(x-api-key['\"]?\s*[:=]\s*['\"]?)[^\s'\",]+"), r"\1***"),
+    (_re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", _re.S),
+     "-----PRIVATE KEY REDACTED-----"),
+    (_re.compile(r'("private_key"\s*:\s*")[^"]+'),               r"\1***"),
+]
+
+
+def redact(text) -> str:
+    """Mask API keys, tokens and private keys in any string."""
+    s = str(text)
+    for rx, rep in _SECRET_PATTERNS:
+        s = rx.sub(rep, s)
+    return s
+
+
+class _RedactingFormatter(logging.Formatter):
+    def format(self, record):
+        return redact(super().format(record))
+
 # ── Set up logger ─────────────────────────────────────────────────
 _logger = logging.getLogger(APP_NAME)
 _logger.setLevel(logging.DEBUG)
@@ -86,7 +116,7 @@ if not _logger.handlers:
         _get_log_file(), maxBytes=5 * 1024 * 1024, backupCount=2,
         encoding="utf-8")
     _fh.setLevel(logging.DEBUG)
-    _fh.setFormatter(logging.Formatter(
+    _fh.setFormatter(_RedactingFormatter(
         "%(asctime)s  %(levelname)-7s  %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S"))
     _logger.addHandler(_fh)
@@ -94,7 +124,7 @@ if not _logger.handlers:
     # Also print to console (captured by GUI subprocess pipe)
     _sh = logging.StreamHandler(sys.stdout)
     _sh.setLevel(logging.INFO)
-    _sh.setFormatter(logging.Formatter(
+    _sh.setFormatter(_RedactingFormatter(
         "%(asctime)s  %(levelname)-7s  %(message)s",
         datefmt="%H:%M:%S"))
     _logger.addHandler(_sh)

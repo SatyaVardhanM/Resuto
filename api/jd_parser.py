@@ -11,6 +11,7 @@ import json
 import re
 import anthropic
 from core.config import AI_MODEL_FAST
+from core.untrusted import fence_jd, clean_field
 
 try:
     from core.logger import log, log_debug, log_warn
@@ -96,9 +97,9 @@ def extract_jd_metadata(job: dict, job_description: str,
                       + ", ".join(niche_acronyms[:15]) + "\n") if niche_acronyms else ""
 
     prompt = (
-        "Job title: " + job.get("title", "") + "\n"
-        "Company: "   + job.get("company", "") + "\n\n"
-        + clean_jd + "\n\n"
+        "Job title: " + clean_field(job.get("title", "")) + "\n"
+        "Company: "   + clean_field(job.get("company", "")) + "\n\n"
+        + fence_jd(clean_jd) + "\n\n"
         + acronym_hint
         + "Extract metadata. Schema:\n" + _SCHEMA
     )

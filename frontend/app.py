@@ -772,6 +772,11 @@ if __name__ == "__main__":
             pass
         else:
             try:
+                try:
+                    from core.logger import redact as _rd
+                    err = _rd(err)
+                except Exception:
+                    pass
                 log.write_text(err, encoding="utf-8")
             except Exception:
                 pass

@@ -107,22 +107,31 @@ def _save_settings(data: dict) -> None:
         pass
 
 def _load_api_key() -> str:
-    """Load saved API key."""
-    return str(_load_settings().get("api_key", "") or "")
+    """Load saved API key (decrypted with Windows DPAPI)."""
+    try:
+        from core.secure_store import load_api_key
+        return load_api_key()
+    except Exception:
+        return ""
 
 def _save_api_key(key: str) -> None:
-    """Persist API key (only called when 'Remember API key' is on)."""
+    """Persist API key encrypted (only called when 'Remember API key' is on)."""
     try:
-        from core.settings import update
-        update(api_key=key)
+        from core.secure_store import save_api_key
+        if not save_api_key(key):
+            try:
+                from core.logger import log_warn
+                log_warn("Could not store API key securely; it will not be remembered")
+            except Exception:
+                pass
     except Exception:
         pass
 
 def _clear_api_key() -> None:
-    """Remove API key from settings."""
+    """Remove API key from settings (encrypted and any legacy plain copy)."""
     try:
-        from core.settings import update
-        update(api_key=None)
+        from core.secure_store import clear_api_key
+        clear_api_key()
     except Exception:
         pass
 

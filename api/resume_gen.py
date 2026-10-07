@@ -11,6 +11,7 @@ import time
 from datetime import datetime
 from api.prompts import get_prompt, PROMPT_RESUME_TAILOR, PROMPT_JOB_EXPERIENCE_PRIORITY
 from core.config import AI_MODEL  # Sonnet — quality critical
+from core.untrusted import fence_jd, scrub_unknown_contacts
 
 # ── 3-Layer gold standard system prompt — hardcoded, never stored in DB ─
 # System = these universal enhancement rules (same for all users)
@@ -379,7 +380,7 @@ Experience (VERBATIM): {json.dumps(profile['experience'], indent=2)}
 {"Education: " + json.dumps(profile['education'], indent=2) if profile.get('education') else "Education: [Not provided — omit this section entirely from the resume]"}
 
 JOB DESCRIPTION:
-{job_description[:4000]}
+{fence_jd(job_description[:4000])}
 
 CRITICAL RULES FOR THIS RESUME:
 1. Extract the EXACT job title from the JD — put it in "title" field and open the summary with it
@@ -429,6 +430,12 @@ EXAMPLES by domain (adapt to whatever domain this candidate is in):
                 response_text = response_text[4:]
 
         tailored = json.loads(response_text.strip())
+
+        # Links / e-mails the job posting may have smuggled into the output
+        tailored, _removed = scrub_unknown_contacts(tailored, profile)
+        if _removed:
+            print(f"   [WARN]  Removed {len(_removed)} link(s)/e-mail(s) not in your profile: "
+                  + ", ".join(_removed[:3]))
 
         # Safety net -- flag fabricated domain terms in the summary
         flagged = check_summary_for_fabrication(
@@ -859,7 +866,7 @@ def prioritize_for_job(tailored: dict, profile: dict,
 
     prompt = (
         f"{priority_prompt}\n\n"
-        f"JOB DESCRIPTION:\n{job_description[:3000]}\n\n"
+        f"JOB DESCRIPTION:\n{fence_jd(job_description[:3000])}\n\n"
         f"CANDIDATE SKILLS (the only technologies allowed in any bullet):\n"
         f"{json.dumps(all_profile_skills)}\n\n"
         f"CANDIDATE EXPERIENCE:\n{json.dumps(experience, indent=2)}\n\n"
@@ -964,6 +971,9 @@ def prioritize_for_job(tailored: dict, profile: dict,
                 result["experience"] = safe_experience
             if safe_projects:
                 result["projects"] = safe_projects
+            result, _removed = scrub_unknown_contacts(result, profile)
+            if _removed:
+                print(f"      [WARN]  Removed {len(_removed)} link(s)/e-mail(s) not in your profile")
             return result
 
     except Exception as e:

@@ -11,6 +11,7 @@ import json
 import os
 from api.prompts import get_prompt, PROMPT_RELEVANCE_CHECK
 from core.config import AI_MODEL_RELEVANCE
+from core.untrusted import fence_jd, clean_field
 
 try:
     from core.logger import log, log_warn, log_error, log_debug
@@ -313,11 +314,11 @@ def check_job_relevance(profile: dict, job: dict, job_description: str,
         + "Skills: " + ", ".join(all_skills[:30]) + "\n"
         + ("Search: " + search_role + "\n" if search_role else "")
         + ("\n" + _work_auth_context(profile) + "\n\n" if _work_auth_context(profile) else "\n\n")
-        + "JOB: " + job.get("title","") + " @ " + job.get("company","") + "\n"
+        + "JOB: " + clean_field(job.get("title","")) + " @ " + clean_field(job.get("company","")) + "\n"
         + ("Required skills: " + ", ".join(jd_skills[:7]) + "\n" if jd_skills else "")
         + ("Mission: " + jd_mission + "\n" if jd_mission else "")
         + ("Seniority: " + jd_seniority + "\n" if jd_seniority else "")
-        + _clean_jd(job_description) + "\n"
+        + fence_jd(_clean_jd(job_description)) + "\n"
         + "Return ONLY valid JSON. No markdown. No explanation. No preamble.\n"
         + '{"is_relevant":bool,"match_score":0-100,"skill_overlap":0-100,'
         + '"domain_match":bool,"transferable":bool,"specialization_gap":bool,'
