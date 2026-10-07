@@ -480,8 +480,10 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
     # _build_run/_show_step → views/run_view.py
 
     def _card(self, parent, **kw):
+        kw.setdefault("border_width", 1)
+        kw.setdefault("border_color", LINE)
         return ctk.CTkFrame(parent, fg_color=BG_CARD,
-                             corner_radius=10, **kw)
+                             corner_radius=14, **kw)
 
     # run methods → views/run_view.py
 

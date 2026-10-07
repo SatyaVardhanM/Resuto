@@ -26,7 +26,7 @@ import traceback
 from frontend.bot_runner import BotRunner
 from frontend.constants import (
     BG, BG_CARD, BG_FIELD, BG_HOVER, LINE,
-    ACCENT, ACCENT_HV, ACCENT_TXT, QUEUED, C,
+    ACCENT, ACCENT_HV, ACCENT_TXT, ACCENT_SOFT, QUEUED, C,
     DANGER, SUCCESS, WARNING, STRETCH, MUTED,
     FG, FG_SOFT, FG_DIM,
     F, _FONT_FAMILY, _FONTS, _BASE_SIZE,
@@ -87,7 +87,7 @@ class RunMixin:
     def _show_step(self, idx: int):
         # Home (step 0) has no step title / Stop row
         try:
-            if idx == 0:
+            if idx in (0, 4):
                 self._run_topbar.grid_remove()
             else:
                 self._run_topbar.grid()
@@ -99,10 +99,10 @@ class RunMixin:
             else:
                 s.place_forget()
         labels = ["",
-                  "Search Settings",
-                  "Analysing profile...",
-                  "Select Roles",
-                  "Running..."]
+                  "Step 1 of 3",
+                  "Step 2 of 3",
+                  "Step 3 of 3",
+                  "Running"]
         self._step_lbl.configure(text=labels[min(idx, len(labels)-1)])
 
 
@@ -313,19 +313,21 @@ class RunMixin:
             self._home_eyebrow.configure(text="READY")
 
         # Recent activity (timeline)
-        for w in self._home_tl.winfo_children():
+        self._fill_timeline(self._home_tl, (allst.get("jobs") or [])[:4],
+                            "No activity yet. Press Start run to find your first matches.")
+
+    def _fill_timeline(self, frame, jobs, empty_text):
+        """Timeline rows: dot · role · company/match/reason · time · status."""
+        for w in frame.winfo_children():
             w.destroy()
-        jobs = (allst.get("jobs") or [])[:4]
         if not jobs:
-            ctk.CTkLabel(self._home_tl,
-                         text="No activity yet. Press Start run to find your first matches.",
-                         font=F("small"), text_color=MUTED, wraplength=380,
-                         justify="left").pack(anchor="w", pady=(12, 0))
+            ctk.CTkLabel(frame, text=empty_text, font=F("small"), text_color=MUTED,
+                         wraplength=420, justify="left").pack(anchor="w", pady=(12, 0))
             return
         for j in jobs:
             label, col = self._STATUS_STYLE.get(j.get("status", ""),
                                                 (str(j.get("status", "")).title(), MUTED))
-            r = ctk.CTkFrame(self._home_tl, fg_color="transparent")
+            r = ctk.CTkFrame(frame, fg_color="transparent")
             r.pack(fill="x", pady=5)
             r.grid_columnconfigure(1, weight=1)
             ctk.CTkLabel(r, text="●", font=F("small"), text_color=col, width=14
@@ -453,8 +455,10 @@ class RunMixin:
 
 
     def _s2(self, f):
-        ctk.CTkLabel(f, text="Search Settings", font=F("heading"),
-                     text_color=FG).pack(anchor="w", pady=(30,8))
+        ctk.CTkLabel(f, text="Search settings", font=F("title"),
+                     text_color=FG).pack(anchor="w", pady=(6, 2))
+        ctk.CTkLabel(f, text="Where to look and how many jobs to apply to on this run.",
+                     font=F("small"), text_color=FG_DIM).pack(anchor="w", pady=(0, 12))
         c = self._card(f); c.pack(fill="x", pady=(0,4))
 
         row = ctk.CTkFrame(c, fg_color="transparent")
@@ -493,7 +497,7 @@ class RunMixin:
         self._maxjobs_var.trace_add("write", lambda *_: self._update_cost_estimate())
         self._update_cost_estimate()
 
-        ctk.CTkFrame(c, height=1, fg_color=BG_HOVER).pack(fill="x", padx=16)
+        ctk.CTkFrame(c, height=1, fg_color=LINE).pack(fill="x", padx=16)
         ctk.CTkLabel(c,
                      text="Job preferences (experience level, job type, workplace, easy apply) are set in the Settings tab.",
                      font=F("small"), text_color=FG_DIM,
@@ -554,8 +558,8 @@ class RunMixin:
         f.grid_rowconfigure(0, weight=1)
         inner = ctk.CTkFrame(f, fg_color="transparent")
         inner.place(relx=0.5, rely=0.4, anchor="center")
-        ctk.CTkLabel(inner, text="◉  Analysing your profile",
-                     font=F("heading"), text_color=FG).pack(pady=(0,12))
+        ctk.CTkLabel(inner, text="Analysing your profile",
+                     font=F("title"), text_color=FG).pack(pady=(0,12))
         self._s3_status = ctk.CTkLabel(inner, text="Connecting to Claude...",
                                         font=F("label"), text_color=FG_DIM)
         self._s3_status.pack()
@@ -695,8 +699,12 @@ class RunMixin:
         f.grid_rowconfigure(1, weight=1)
         f.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(f, text="Select Roles", font=F("heading"),
-                     text_color=FG).grid(row=0, column=0, sticky="w", pady=(20,4))
+        hdr = ctk.CTkFrame(f, fg_color="transparent")
+        hdr.grid(row=0, column=0, sticky="ew", pady=(6, 10))
+        ctk.CTkLabel(hdr, text="Choose roles to search", font=F("title"),
+                     text_color=FG).pack(anchor="w")
+        ctk.CTkLabel(hdr, text="Suggested from your resume profile. Pick one or more.",
+                     font=F("small"), text_color=FG_DIM).pack(anchor="w")
 
         c = self._card(f)
         c.grid(row=1, column=0, sticky="nsew", pady=(0,4))
@@ -714,7 +722,7 @@ class RunMixin:
         self._role_cnt = ctk.CTkLabel(ctrl, text="", font=F("small"), text_color=FG_DIM)
         self._role_cnt.pack(side="right")
 
-        ctk.CTkFrame(c, height=1, fg_color=BG_HOVER).grid(row=0, column=0, sticky="sew")
+        ctk.CTkFrame(c, height=1, fg_color=LINE).grid(row=0, column=0, sticky="sew")
 
         scroll = ctk.CTkScrollableFrame(c, fg_color="transparent", corner_radius=0)
         scroll.grid(row=1, column=0, sticky="nsew", padx=8, pady=4)
@@ -723,30 +731,31 @@ class RunMixin:
         self._role_vars   = []
 
         # Search mode selector
-        mode_frame = ctk.CTkFrame(f, fg_color=BG_CARD, corner_radius=8)
-        mode_frame.grid(row=2, column=0, sticky="ew", padx=8, pady=(8,0))
+        mode_frame = ctk.CTkFrame(f, fg_color=BG_CARD, corner_radius=14,
+                                  border_width=1, border_color=LINE)
+        mode_frame.grid(row=2, column=0, sticky="ew", pady=(10,0))
         mode_frame.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(mode_frame, text="Search strategy:",
+        ctk.CTkLabel(mode_frame, text="Search strategy",
                      font=F("label_b"), text_color=FG
                      ).grid(row=0, column=0, sticky="w", padx=14, pady=(10,4))
 
         self._search_mode = ctk.StringVar(value="specific")
         modes = [
             ("specific",
-             "🎯  Exact names",
+             "Exact names",
              "Searches LinkedIn for the exact role names above\n"
              "Best when your profile is highly specialised"),
             ("broad",
-             "🔍  Broader terms",
+             "Broader terms",
              "Converts roles to general titles (Software Engineer, Developer)\n"
              "More results — better when exact names return few jobs"),
             ("both",
-             "⚡  Both",
+             "Both",
              "Runs exact names first, then broad terms\n"
              "Maximum coverage — takes longer"),
             ("location",
-             "📍  Location only",
+             "Location only",
              "No keyword — returns all jobs in your location\n"
              "Bot queues only jobs matching your profile via AI filter"),
         ]
@@ -771,7 +780,7 @@ class RunMixin:
         ctk.CTkButton(nav, text="← Back", width=100,
                       fg_color=BG_CARD, text_color=FG, hover_color=BG_HOVER,
                       command=lambda: self._show_step(1)).pack(side="left")
-        self._start_btn = ctk.CTkButton(nav, text="▶  Start Run",
+        self._start_btn = ctk.CTkButton(nav, text="▶  Start run", height=36,
                                          command=self._start)
         self._start_btn.pack(side="right")
 
@@ -858,26 +867,81 @@ class RunMixin:
         self._update_role_cnt()
 
     def _s_running(self, f):
-        f.grid_rowconfigure(0, weight=1)
-        inner = ctk.CTkFrame(f, fg_color="transparent")
-        inner.place(relx=0.5, rely=0.35, anchor="center")
-        self._run_inner = inner
+        """Running screen: hero card (what Resuto is doing now, stages,
+        progress, this run's totals, Stop) and a live activity timeline.
+        Phase 3 prompts replace the timeline while Resuto waits for you."""
+        f.grid_columnconfigure(0, weight=1)
+        f.grid_rowconfigure(1, weight=1)
         self._p3_card = None
-        self._run_phase_lbl = ctk.CTkLabel(inner, text="Bot is running...",
-                                            font=F("heading"), text_color=FG)
-        self._run_phase_lbl.pack(pady=(0,8))
-        self._run_sub_lbl = ctk.CTkLabel(inner, text="",
-                                          font=F("label"), text_color=FG_DIM)
-        self._run_sub_lbl.pack()
+
+        hero = ctk.CTkFrame(f, fg_color=BG_CARD, corner_radius=16,
+                            border_width=1, border_color=LINE)
+        hero.grid(row=0, column=0, sticky="ew", pady=(4, 12))
+        hero.grid_columnconfigure(0, weight=1)
+        self._run_inner = hero
+        ctk.CTkFrame(hero, height=3, corner_radius=2, fg_color=ACCENT
+                     ).grid(row=0, column=0, columnspan=2, sticky="ew",
+                            padx=14, pady=(3, 0))
+        self._run_eyebrow = ctk.CTkLabel(hero, text="RUN IN PROGRESS",
+                                         font=F("small_b"), text_color=ACCENT_TXT)
+        self._run_eyebrow.grid(row=1, column=0, sticky="w", padx=26, pady=(14, 0))
+        self._run_phase_lbl = ctk.CTkLabel(hero, text="Bot is running...",
+                                           font=F("stat"), text_color=FG,
+                                           anchor="w", justify="left")
+        self._run_phase_lbl.grid(row=2, column=0, sticky="w", padx=26)
+        self._run_sub_lbl = ctk.CTkLabel(hero, text="", font=F("label"),
+                                         text_color=FG_DIM, anchor="w",
+                                         justify="left", wraplength=620)
+        self._run_sub_lbl.grid(row=3, column=0, sticky="w", padx=26, pady=(2, 0))
+
+        # Stop (mirrors the Stop button the wizard uses) + queue button
+        self._run_btnrow = ctk.CTkFrame(hero, fg_color="transparent")
+        self._run_btnrow.grid(row=1, column=1, rowspan=3, sticky="ne",
+                              padx=22, pady=(16, 0))
+        self._run_stop_btn = ctk.CTkButton(
+            self._run_btnrow, text="■  Stop", width=92, height=34,
+            fg_color="transparent", text_color=DANGER, border_width=1,
+            border_color=DANGER, hover_color=BG_HOVER, corner_radius=8,
+            command=self._stop)
         # Shown on the end screen when jobs are still queued
-        self._run_queue_btn = ctk.CTkButton(inner, text="Apply to queued jobs",
-                                            height=36, fg_color=ACCENT,
-                                            hover_color=ACCENT_HV,
-                                            command=self._start_apply_queue)
+        self._run_queue_btn = ctk.CTkButton(
+            self._run_btnrow, text="Apply to queued jobs", height=34,
+            fg_color=ACCENT, hover_color=ACCENT_HV, text_color="#FFFFFF",
+            corner_radius=8, command=self._start_apply_queue)
+
+        # Stages + progress
+        stages = ctk.CTkFrame(hero, fg_color="transparent")
+        stages.grid(row=4, column=0, columnspan=2, sticky="ew", padx=26, pady=(14, 0))
+        self._run_stage_lbls = []
+        for i, name in enumerate(("Search & match", "Tailor resumes", "Apply")):
+            if i:
+                ctk.CTkLabel(stages, text="›", font=F("small"),
+                             text_color=MUTED).pack(side="left", padx=8)
+            l = ctk.CTkLabel(stages, text=name, font=F("small_b"), text_color=MUTED)
+            l.pack(side="left")
+            self._run_stage_lbls.append(l)
+        self._run_totals = ctk.CTkLabel(stages, text="", font=F("small"),
+                                        text_color=FG_DIM)
+        self._run_totals.pack(side="right")
+        self._run_prog = ctk.CTkProgressBar(hero, height=8, corner_radius=4,
+                                            progress_color=ACCENT,
+                                            fg_color=BG_FIELD, mode="indeterminate")
+        self._run_prog.grid(row=5, column=0, columnspan=2, sticky="ew",
+                            padx=26, pady=(8, 20))
+        self._run_prog_on = False
+
+        # Live activity
+        self._run_tl_card = ctk.CTkFrame(f, fg_color=BG_CARD, corner_radius=14,
+                                         border_width=1, border_color=LINE)
+        self._run_tl_card.grid(row=1, column=0, sticky="nsew")
+        ctk.CTkLabel(self._run_tl_card, text="Live activity", font=F("body_b"),
+                     text_color=FG).pack(anchor="w", padx=18, pady=(14, 4))
+        self._run_tl = ctk.CTkFrame(self._run_tl_card, fg_color="transparent")
+        self._run_tl.pack(fill="both", expand=True, padx=18, pady=(0, 12))
 
         # Attention card (shown when bot asks for input)
         self._attention_card = ctk.CTkFrame(f, fg_color=BG_CARD,
-                                             corner_radius=10,
+                                             corner_radius=14,
                                              border_color=ACCENT, border_width=2)
         self._attention_hl   = ctk.CTkLabel(self._attention_card, text="",
                                              font=F("body_b"), text_color=FG,
@@ -887,6 +951,78 @@ class RunMixin:
                                              font=F("label"), text_color=FG_DIM)
         self._attention_sub.pack(padx=20, pady=(0,16))
 
+        self._run_tick_n = 0
+        self.after(1000, self._run_tick)
+
+    def _run_tick(self):
+        """Keep the running screen in step with the run (every second)."""
+        try:
+            if self._steps[4].winfo_ismapped():
+                live = bool(getattr(self, "_live", False))
+                # Stop button mirrors the wizard's Stop button
+                if self._stop_btn.winfo_manager():
+                    if not self._run_stop_btn.winfo_ismapped():
+                        self._run_stop_btn.pack(side="left", padx=(8, 0))
+                else:
+                    self._run_stop_btn.pack_forget()
+                # Eyebrow
+                done = self._run_phase_lbl.cget("text") in ("Run complete", "Stopped")
+                waiting = (getattr(self, "_p3_card", None) is not None
+                           and self._p3_card.winfo_ismapped())
+                self._run_eyebrow.configure(
+                    text=("WAITING FOR YOU" if waiting and live else
+                          "RUN IN PROGRESS" if live else
+                          "RUN COMPLETE" if done else "RUN"))
+                # Stages
+                ph = int(getattr(self, "_current_phase", 1) or 1)
+                for i, l in enumerate(self._run_stage_lbls):
+                    n = i + 1
+                    name = ("Search & match", "Tailor resumes", "Apply")[i]
+                    if done or n < ph:
+                        l.configure(text="✓ " + name, text_color=SUCCESS)
+                    elif n == ph and live:
+                        l.configure(text=name, text_color=ACCENT_TXT)
+                    else:
+                        l.configure(text=name, text_color=MUTED)
+                # Progress bar animates while live
+                if live and not self._run_prog_on:
+                    self._run_prog.configure(mode="indeterminate")
+                    self._run_prog.start()
+                    self._run_prog_on = True
+                elif not live and self._run_prog_on:
+                    self._run_prog.stop()
+                    self._run_prog.configure(mode="determinate")
+                    self._run_prog.set(1 if done else 0)
+                    self._run_prog_on = False
+                # Totals + timeline every 3 seconds
+                self._run_tick_n += 1
+                if self._run_tick_n % 3 == 1:
+                    self._run_refresh_data()
+        except Exception:
+            pass
+        try:
+            self.after(1000, self._run_tick)
+        except Exception:
+            pass
+
+    def _run_refresh_data(self):
+        since = getattr(self, "_bot_start", None)
+        try:
+            from frontend.app import _read_stats
+            st = _read_stats(since=since) if since else {}
+            recent = (_read_stats() or {}).get("jobs") or []
+        except Exception:
+            st, recent = {}, []
+        c = (st or {}).get("counts", {}) or {}
+        self._run_totals.configure(
+            text="%d applied  ·  %d skipped  ·  %d failed  ·  %d queued" % (
+                int(c.get("applied", 0) or 0), int(c.get("skipped", 0) or 0),
+                int(c.get("failed", 0) or 0), int((st or {}).get("queued", 0) or 0)))
+        if since:
+            recent = [j for j in recent if str(j.get("logged_at", "")) >= since]
+        self._fill_timeline(self._run_tl, recent[:5],
+                            "Waiting for the first job… Resuto is searching LinkedIn.")
+
     # ── Errors tab ────────────────────────────────────────────────
     def _build_errors(self):
         f = self._tabs["errors"]
@@ -894,9 +1030,11 @@ class RunMixin:
         f.grid_rowconfigure(1, weight=1)
 
         top = ctk.CTkFrame(f, fg_color="transparent")
-        top.grid(row=0, column=0, sticky="ew", padx=20, pady=(14,6))
-        ctk.CTkLabel(top, text="Errors and Warnings",
+        top.grid(row=0, column=0, sticky="ew", padx=24, pady=(6, 8))
+        ctk.CTkLabel(top, text="Errors and warnings",
                      font=F("body_b"), text_color=FG).pack(side="left")
+        ctk.CTkLabel(top, text="from the current session",
+                     font=F("small"), text_color=MUTED).pack(side="left", padx=(8, 0))
 
         # Open log file button
         def _open_log():
@@ -921,7 +1059,7 @@ class RunMixin:
 
                 # Show in a simple in-app popup — no external app needed
                 win = ctk.CTkToplevel(self)
-                win.title("Bot Log")
+                win.title("Resuto — Log")
                 win.geometry("900x600")
                 win.grab_set()
 
@@ -953,14 +1091,16 @@ class RunMixin:
             except Exception:
                 messagebox.showinfo("Log File", "Log file not available")
 
-        ctk.CTkButton(top, text="📂 Open Log", width=100,
-                      height=28, font=F("small"),
-                      fg_color=BG_CARD, text_color=FG, hover_color=BG_HOVER,
-                      command=_open_log).pack(side="right", padx=(4,0))
-        ctk.CTkButton(top, text="📍 Log Path", width=90,
-                      height=28, font=F("small"),
-                      fg_color=BG_CARD, text_color=FG, hover_color=BG_HOVER,
-                      command=_show_log_path).pack(side="right", padx=(4,0))
+        ctk.CTkButton(top, text="Open log", width=96,
+                      height=32, font=F("small_b"), corner_radius=8,
+                      fg_color="transparent", text_color=FG, hover_color=BG_HOVER,
+                      border_width=1, border_color=LINE,
+                      command=_open_log).pack(side="right", padx=(8,0))
+        ctk.CTkButton(top, text="Log location", width=104,
+                      height=32, font=F("small_b"), corner_radius=8,
+                      fg_color="transparent", text_color=FG, hover_color=BG_HOVER,
+                      border_width=1, border_color=LINE,
+                      command=_show_log_path).pack(side="right", padx=(8,0))
         self._err_cnt_lbl = ctk.CTkLabel(top, text="0 issues",
                                           font=F("small"), text_color=FG_DIM)
         self._err_cnt_lbl.pack(side="right", padx=(0,8))
@@ -968,10 +1108,11 @@ class RunMixin:
         f.grid_columnconfigure(0, weight=1)
         f.grid_rowconfigure(1, weight=1)
         self._err_box = ctk.CTkTextbox(f, font=F("mono"),
-                                        fg_color=BG_CARD, corner_radius=8,
+                                        fg_color=BG_CARD, corner_radius=12,
+                                        border_width=1, border_color=LINE,
                                         text_color=FG_SOFT, state="disabled",
                                         wrap="word")
-        self._err_box.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0,16))
+        self._err_box.grid(row=1, column=0, sticky="nsew", padx=24, pady=(0,16))
         self._apply_err_tags()
 
     def _apply_err_tags(self):
@@ -1266,63 +1407,135 @@ class RunMixin:
     # backend.browser.apply_to_job accepts: "applied" / "skip" / "stop".
     # One card for every Phase 3 question, with its buttons INSIDE it.
     def _ensure_p3_card(self):
+        """'Your turn' card: a structured job card that takes the timeline's
+        place while Resuto waits for a decision."""
         if getattr(self, "_p3_card", None) is not None:
             return
         f = self._steps[4]
-        c = ctk.CTkFrame(f, fg_color=BG_CARD, corner_radius=12,
-                         border_color=ACCENT, border_width=2)
-        self._p3_card    = c
-        self._p3_title   = ctk.CTkLabel(c, text="", font=F("heading"), text_color=FG,
-                                        wraplength=640, justify="center")
-        self._p3_company = ctk.CTkLabel(c, text="", font=F("body"), text_color=FG_SOFT)
-        self._p3_meta    = ctk.CTkLabel(c, text="", font=F("small"), text_color=FG_DIM)
-        self._p3_reason  = ctk.CTkLabel(c, text="", font=F("small"), text_color=FG_SOFT,
-                                        wraplength=640, justify="left")
-        self._p3_status  = ctk.CTkLabel(c, text="", font=F("small"), text_color=WARNING,
-                                        wraplength=640, justify="center")
-        self._p3_btns    = ctk.CTkFrame(c, fg_color="transparent")
-        self._p3_links   = ctk.CTkFrame(c, fg_color="transparent")
-        self._p3_title.pack(padx=24, pady=(18, 0))
-        self._p3_company.pack(padx=24, pady=(2, 0))
-        self._p3_meta.pack(padx=24, pady=(6, 0))
-        self._p3_reason.pack(padx=24, pady=(10, 0))
-        self._p3_status.pack(padx=24, pady=(10, 0))
-        self._p3_btns.pack(padx=24, pady=(14, 4))
-        self._p3_links.pack(padx=24, pady=(0, 16))
+        c = ctk.CTkFrame(f, fg_color=BG_CARD, corner_radius=14,
+                         border_width=1, border_color=LINE)
+        c.grid_columnconfigure(0, weight=1)
+        self._p3_card = c
+        ctk.CTkFrame(c, height=3, corner_radius=2, fg_color=ACCENT
+                     ).grid(row=0, column=0, sticky="ew", padx=14, pady=(3, 0))
+
+        # Header: company initial · role / company / progress · match chip
+        head = ctk.CTkFrame(c, fg_color="transparent")
+        head.grid(row=1, column=0, sticky="ew", padx=22, pady=(16, 12))
+        head.grid_columnconfigure(1, weight=1)
+        self._p3_tile = ctk.CTkLabel(head, text="", width=44, height=44,
+                                     corner_radius=10, fg_color=BG_FIELD,
+                                     font=F("heading"), text_color=FG_SOFT)
+        self._p3_tile.grid(row=0, column=0, rowspan=3, sticky="nw", padx=(0, 14))
+        self._p3_title = ctk.CTkLabel(head, text="", font=F("heading"),
+                                      text_color=FG, anchor="w", justify="left",
+                                      wraplength=560)
+        self._p3_title.grid(row=0, column=1, sticky="w")
+        self._p3_company = ctk.CTkLabel(head, text="", font=F("label"),
+                                        text_color=FG_SOFT, anchor="w")
+        self._p3_company.grid(row=1, column=1, sticky="w")
+        self._p3_meta = ctk.CTkLabel(head, text="", font=F("small"),
+                                     text_color=MUTED, anchor="w")
+        self._p3_meta.grid(row=2, column=1, sticky="w", pady=(2, 0))
+        self._p3_chip = ctk.CTkLabel(head, text="", font=F("small_b"),
+                                     text_color=ACCENT_TXT, fg_color=ACCENT_SOFT,
+                                     corner_radius=10, height=26)
+        self._p3_chip.grid(row=0, column=2, sticky="ne", padx=(12, 0))
+
+        ctk.CTkFrame(c, height=1, fg_color=LINE).grid(row=2, column=0, sticky="ew", padx=22)
+
+        # Body: why it fits / resume, then the instruction line
+        body = ctk.CTkFrame(c, fg_color="transparent")
+        body.grid(row=3, column=0, sticky="nsew", padx=22, pady=(12, 0))
+        body.grid_columnconfigure(0, weight=1)
+        self._p3_reason_cap = ctk.CTkLabel(body, text="", font=F("small_b"),
+                                           text_color=MUTED, anchor="w")
+        self._p3_reason_box = ctk.CTkFrame(body, fg_color=BG_FIELD, corner_radius=10)
+        self._p3_reason = ctk.CTkLabel(self._p3_reason_box, text="", font=F("small"),
+                                       text_color=FG_SOFT, anchor="w", justify="left",
+                                       wraplength=640)
+        self._p3_reason.pack(fill="x", padx=14, pady=10)
+        self._p3_status = ctk.CTkLabel(body, text="", font=F("small"),
+                                       text_color=FG_DIM, anchor="w", justify="left",
+                                       wraplength=660)
+        self._p3_body = body
+
+        # Footer: links (left) · actions (right)
+        ctk.CTkFrame(c, height=1, fg_color=LINE).grid(row=4, column=0, sticky="ew",
+                                                      padx=22, pady=(12, 0))
+        foot = ctk.CTkFrame(c, fg_color="transparent")
+        foot.grid(row=5, column=0, sticky="ew", padx=22, pady=12)
+        self._p3_links = ctk.CTkFrame(foot, fg_color="transparent")
+        self._p3_links.pack(side="left")
+        self._p3_btns = ctk.CTkFrame(foot, fg_color="transparent")
+        self._p3_btns.pack(side="right")
 
     def _p3_show(self, title, company="", meta="", reason="", status="",
-                 buttons=(), links=()):
+                 buttons=(), links=(), score=None, reason_label="Why it fits",
+                 tile=None, waiting_text="Resuto is waiting for your decision below."):
         """buttons: (text, value, style) — style primary/success/neutral.
-        links: (text, callback) — small outlined buttons."""
+        links: (text, callback) — quiet text buttons on the left."""
         self._ensure_p3_card()
         self._hide_action_bar()           # legacy d/s/q bar, if it was up
         self._p3_title.configure(text=title)
         self._p3_company.configure(text=company)
         self._p3_meta.configure(text=meta)
-        self._p3_reason.configure(text=reason)
-        self._p3_status.configure(text=status)
+        for _w, _t in ((self._p3_company, company), (self._p3_meta, meta)):
+            if _t:
+                _w.grid()
+            else:
+                _w.grid_remove()
+        initial = tile or ((company or "").strip()[:1].upper() or "•")
+        self._p3_tile.configure(text=initial)
+        try:
+            sc = int(score) if score not in (None, "") else None
+        except (TypeError, ValueError):
+            sc = None
+        if sc:
+            self._p3_chip.configure(text="  %d%% match  " % sc)
+            self._p3_chip.grid()
+        else:
+            self._p3_chip.grid_remove()
+
+        for w in (self._p3_reason_cap, self._p3_reason_box, self._p3_status):
+            w.pack_forget()
+        if reason:
+            self._p3_reason_cap.configure(text=reason_label.upper())
+            self._p3_reason_cap.pack(fill="x")
+            self._p3_reason.configure(text=reason)
+            self._p3_reason_box.pack(fill="x", pady=(4, 0))
+        if status:
+            self._p3_status.configure(text="ⓘ  " + status)
+            self._p3_status.pack(fill="x", pady=(10, 0))
+
         for fr in (self._p3_btns, self._p3_links):
             for w in fr.winfo_children():
                 w.destroy()
-        styles = {"primary": (ACCENT, ACCENT_HV), "success": (SUCCESS, "#1a9e4a"),
-                  "neutral": (BG_FIELD, BG_HOVER)}
-        for txt, val, st in buttons:
-            fg, hv = styles.get(st, styles["neutral"])
-            ctk.CTkButton(self._p3_btns, text=txt, fg_color=fg, hover_color=hv,
-                          height=38, width=170 if st != "neutral" else 130,
-                          font=F("label"),
-                          command=lambda v=val: self._answer_apply(v)
-                          ).pack(side="left", padx=5)
+        # Quiet actions first, the main action last (right-most, indigo)
+        ordered = ([b for b in buttons if b[2] == "neutral"] +
+                   [b for b in buttons if b[2] != "neutral"])
+        for txt, val, st in ordered:
+            if st == "neutral":
+                kw = dict(fg_color="transparent", hover_color=BG_HOVER,
+                          text_color=FG, border_width=1, border_color=LINE)
+            else:
+                kw = dict(fg_color=ACCENT, hover_color=ACCENT_HV,
+                          text_color="#FFFFFF")
+            ctk.CTkButton(self._p3_btns, text=txt, height=36, corner_radius=8,
+                          width=110 if st == "neutral" else 160,
+                          font=F("small_b"),
+                          command=lambda v=val: self._answer_apply(v), **kw
+                          ).pack(side="left", padx=(8, 0))
         for txt, cb in links:
-            ctk.CTkButton(self._p3_links, text=txt, command=cb, height=30,
+            ctk.CTkButton(self._p3_links, text=txt, command=cb, height=30, width=0,
                           fg_color="transparent", hover_color=BG_HOVER,
-                          border_width=1, border_color=MUTED,
-                          text_color=FG_SOFT, font=F("small")
-                          ).pack(side="left", padx=5)
-        self._run_inner.place_configure(rely=0.12)
-        self._p3_card.place(relx=0.5, rely=0.55, anchor="center", relwidth=0.8)
+                          text_color=ACCENT_TXT, font=F("small_b")
+                          ).pack(side="left", padx=(0, 4))
+
+        self._run_tl_card.grid_remove()
+        self._p3_card.grid(row=1, column=0, sticky="new")
         self._step_lbl.configure(text="Waiting for you")
-        self._run_sub_lbl.configure(text="")
+        self._run_sub_lbl.configure(text=waiting_text)
         self._nav(0)
 
     def _p3_progress(self, data: dict) -> str:
@@ -1355,8 +1568,10 @@ class RunMixin:
         self._p3_show(
             title=str(data.get("title") or "Unknown role"),
             company=str(data.get("company") or ""),
-            meta="Match %s%%   •   %s" % (data.get("score") or 0, self._p3_progress(data)),
+            meta=self._p3_progress(data),
+            score=data.get("score"),
             reason=reason,
+            reason_label="Why it fits",
             status=("The job is open in the bot's browser. Want a tailored resume for it?"
                     if data.get("opened") else
                     "Couldn't open the job page automatically — try \"Show job again\"."),
@@ -1383,12 +1598,14 @@ class RunMixin:
         self._p3_show(
             title=str(data.get("title") or "Unknown role"),
             company=str(data.get("company") or ""),
-            meta="Match %s%%   •   %s" % (data.get("score") or 0, self._p3_progress(data)),
+            meta=self._p3_progress(data),
+            score=data.get("score"),
             reason=res_txt,
+            reason_label="Your tailored resume",
             status=("Apply in the bot's browser, then tell Resuto what you did."
                     if data.get("opened") else
                     "Couldn't open the job page automatically — try \"Show job again\"."),
-            buttons=[("✓  Applied", "applied", "success"),
+            buttons=[("✓  I applied", "applied", "success"),
                      ("Didn't apply", "skip", "neutral"),
                      ("Finish", "stop", "neutral")],
             links=links)
@@ -1404,6 +1621,8 @@ class RunMixin:
             reason="",
             status="%d more job%s ready. Continue applying?"
                    % (left, " is" if left == 1 else "s are"),
+            tile=str(limit) if limit else "•",
+            waiting_text="Your application limit for this run is reached.",
             buttons=[("Continue applying", "continue", "success"),
                      ("Finish", "finish", "neutral")])
         self._set_status("Limit reached — continue or finish?")
@@ -1492,11 +1711,11 @@ class RunMixin:
         except Exception:
             pass
         if getattr(self, "_p3_card", None) is not None:
-            self._p3_card.place_forget()
-            try:
-                self._run_inner.place_configure(rely=0.35)
-            except Exception:
-                pass
+            self._p3_card.grid_remove()
+        try:
+            self._run_tl_card.grid()
+        except Exception:
+            pass
 
     def _poll(self):
         try:
@@ -1697,7 +1916,7 @@ class RunMixin:
                 pass
             if queued > 0:
                 self._run_queue_btn.configure(text="Apply to queued jobs (%d)" % queued)
-                self._run_queue_btn.pack(pady=(14, 0))
+                self._run_queue_btn.pack(side="left", padx=(8, 0))
             self._live = False
             self._live_dot.configure(text_color=MUTED)
             # Keep Stop button visible — clicking it closes the browser

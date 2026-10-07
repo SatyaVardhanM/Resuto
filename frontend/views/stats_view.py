@@ -19,7 +19,7 @@ import re
 from frontend.constants import (
     BG, BG_CARD, BG_FIELD, BG_HOVER,
     ACCENT, DANGER, SUCCESS, WARNING, STRETCH, MUTED,
-    FG, FG_SOFT, FG_DIM, F, C, LINE,
+    FG, FG_SOFT, FG_DIM, F, C, LINE, ACCENT_HV, QUEUED, ACCENT_TXT,
 )
 
 
@@ -27,6 +27,9 @@ def _read_stats(since=None, recent_since=None):
     """DB helper — imported here to keep stats self-contained."""
     from frontend.app import _read_stats as _rs
     return _rs(since=since, recent_since=recent_since)
+
+
+_SKIP = ("#9CA0AD", "#6E7385")   # skipped jobs: neutral grey (matches the cards)
 
 
 class StatsMixin:
@@ -42,9 +45,11 @@ class StatsMixin:
 
         # Row 0: header
         hdr = ctk.CTkFrame(f, fg_color="transparent")
-        hdr.grid(row=0, column=0, sticky="ew", padx=20, pady=(14, 4))
-        ctk.CTkLabel(hdr, text="Application Stats",
+        hdr.grid(row=0, column=0, sticky="ew", padx=24, pady=(6, 8))
+        ctk.CTkLabel(hdr, text="This session",
                      font=F("body_b"), text_color=FG).pack(side="left")
+        ctk.CTkLabel(hdr, text="since you opened Resuto",
+                     font=F("small"), text_color=MUTED).pack(side="left", padx=(8, 0))
         self._live_dot = ctk.CTkLabel(hdr, text="● Live",
                                        font=F("small"), text_color=MUTED)
         self._live_dot.pack(side="right")
@@ -52,8 +57,9 @@ class StatsMixin:
         # Re-apply review (jobs applied to in earlier sessions)
         self._review_btn = ctk.CTkButton(
             hdr, text="Re-apply review",
-            height=30, font=F("small"),
-            fg_color=BG_FIELD, text_color=FG, hover_color=BG_HOVER,
+            height=32, font=F("small_b"), corner_radius=8,
+            fg_color="transparent", text_color=FG, hover_color=BG_HOVER,
+            border_width=1, border_color=LINE,
             state="disabled",
             command=self._open_review_window)
         self._review_btn.pack(side="right", padx=(0, 12))
@@ -61,14 +67,16 @@ class StatsMixin:
         # Apply to queued jobs (resume ready) — same card flow as a run
         self._queue_btn = ctk.CTkButton(
             hdr, text="Apply to queued jobs",
-            height=30, font=F("small"),
-            fg_color=ACCENT, hover_color=BG_HOVER,
+            height=32, font=F("small_b"), corner_radius=8,
+            fg_color=ACCENT, hover_color=ACCENT_HV, text_color="#FFFFFF",
+            text_color_disabled=MUTED,
             state="disabled",
             command=self._start_apply_queue)
         self._queue_btn.pack(side="right", padx=(0, 8))
 
         # Row 1: activity strip (hidden until bot runs)
-        self._act_strip = ctk.CTkFrame(f, fg_color=BG_CARD, corner_radius=8)
+        self._act_strip = ctk.CTkFrame(f, fg_color=BG_CARD, corner_radius=12,
+                                       border_width=1, border_color=LINE)
         self._act_role  = ctk.CTkLabel(self._act_strip, text="",
                                         font=F("label_b"), text_color=ACCENT, anchor="w")
         self._act_role.pack(anchor="w", padx=14, pady=(8, 0))
@@ -80,39 +88,48 @@ class StatsMixin:
 
         # Row 2: stat cards
         self._cards_row = ctk.CTkFrame(f, fg_color="transparent")
-        self._cards_row.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 8))
+        self._cards_row.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 10))
         self._stat_vars = {}
         self._cards_row.grid_columnconfigure((0,1,2,3,4), weight=1)
         card_defs = [
-            ("applied", "✓ Applied",   SUCCESS),
-            ("skipped", "− Skipped",   WARNING),
-            ("failed",  "✕ Failed",    DANGER),
-            ("avg",     "◉ Avg Match", FG_SOFT),
-            ("queued",  "⌛ Queued",    ACCENT),
+            ("applied", "Applied",   SUCCESS),
+            ("skipped", "Skipped",   MUTED),
+            ("failed",  "Failed",    DANGER),
+            ("avg",     "Avg match", ACCENT_TXT),
+            ("queued",  "Queued",    QUEUED),
         ]
         for col_idx, (key, label, color) in enumerate(card_defs):
             c = ctk.CTkFrame(self._cards_row, fg_color=BG_CARD,
-                              corner_radius=10)
+                              corner_radius=12, border_width=1, border_color=LINE)
             c.grid(row=0, column=col_idx, sticky="ew",
-                   padx=(0, 6), pady=4, ipadx=8, ipady=8)
-            var = ctk.StringVar(value="--")
+                   padx=(0 if col_idx == 0 else 8, 0), pady=0)
+            cap = ctk.CTkFrame(c, fg_color="transparent")
+            cap.pack(anchor="w", padx=16, pady=(12, 0))
+            ctk.CTkLabel(cap, text="●", font=F("tiny"), text_color=color
+                         ).pack(side="left", padx=(0, 6))
+            ctk.CTkLabel(cap, text=label, font=F("small"),
+                         text_color=MUTED).pack(side="left")
+            var = ctk.StringVar(value="0")
             ctk.CTkLabel(c, textvariable=var, font=F("stat"),
-                         text_color=color).pack()
-            ctk.CTkLabel(c, text=label, font=F("small"),
-                         text_color=MUTED).pack()
+                         text_color=FG).pack(anchor="w", padx=16, pady=(0, 10))
             self._stat_vars[key] = (var, c)
 
 
         # Middle: donut + job list
         mid = ctk.CTkFrame(f, fg_color="transparent")
-        mid.grid(row=3, column=0, sticky="nsew", padx=20, pady=(0, 8))
+        mid.grid(row=3, column=0, sticky="nsew", padx=24, pady=(0, 14))
         mid.grid_columnconfigure(1, weight=1)
         mid.grid_rowconfigure(0, weight=1)
 
         # Donut canvas
-        self._donut_cv = tk.Canvas(mid, width=130, height=180,
-                                    bg=C(BG), highlightthickness=0)
-        self._donut_cv.grid(row=0, column=0, padx=(0, 16), sticky="n")
+        donut_card = ctk.CTkFrame(mid, fg_color=BG_CARD, corner_radius=14,
+                                  border_width=1, border_color=LINE)
+        donut_card.grid(row=0, column=0, padx=(0, 14), sticky="n")
+        ctk.CTkLabel(donut_card, text="Results", font=F("small_b"),
+                     text_color=FG).pack(anchor="w", padx=16, pady=(12, 4))
+        self._donut_cv = tk.Canvas(donut_card, width=130, height=180,
+                                    bg=C(BG_CARD), highlightthickness=0)
+        self._donut_cv.pack(padx=12, pady=(0, 10))
         self._draw_donut(0, 0, 0)
 
         # Scrollable job list — height=1 lets it fill via sticky="nsew"
@@ -121,9 +138,9 @@ class StatsMixin:
         list_col.grid_columnconfigure(0, weight=1)
         list_col.grid_rowconfigure(1, weight=1)
 
-        ctk.CTkLabel(list_col, text="Recent  (click to expand)",
-                     font=F("small"), text_color=FG_DIM
-                     ).grid(row=0, column=0, sticky="w", pady=(0, 4))
+        ctk.CTkLabel(list_col, text="Recent jobs  ·  click a job for details",
+                     font=F("small"), text_color=MUTED
+                     ).grid(row=0, column=0, sticky="w", pady=(0, 6))
 
         self._job_scroll = ctk.CTkScrollableFrame(
             list_col, fg_color="transparent", corner_radius=0)
@@ -140,28 +157,28 @@ class StatsMixin:
     def _draw_donut(self, applied: int, skipped: int, failed: int):
         self._donut_last = (applied, skipped, failed)
         cv = self._donut_cv
-        cv.configure(bg=C(BG))
+        cv.configure(bg=C(BG_CARD))
         cv.delete("arc","hole","txt")
         cx, cy, ro, ri = 65, 65, 52, 30
         total = applied + skipped + failed or 1
         start = -90.0
-        for n, col in [(applied, SUCCESS),(skipped, WARNING),(failed, DANGER)]:
+        for n, col in [(applied, SUCCESS),(skipped, _SKIP),(failed, DANGER)]:
             ext = n / total * 360
             if ext >= 359.5:
                 # Tk draws NOTHING for a 360° arc — the ring vanished when
                 # every job had the same status (e.g. all skipped)
                 cv.create_oval(cx-ro, cy-ro, cx+ro, cy+ro,
-                               fill=C(col), outline=C(BG), width=3, tags="arc")
+                               fill=C(col), outline=C(BG_CARD), width=3, tags="arc")
             elif ext > 0.5:
                 cv.create_arc(cx-ro, cy-ro, cx+ro, cy+ro,
                               start=start, extent=ext,
-                              fill=C(col), outline=C(BG), width=3, tags="arc")
+                              fill=C(col), outline=C(BG_CARD), width=3, tags="arc")
             start += ext
         if applied+skipped+failed == 0:
             cv.create_oval(cx-ro, cy-ro, cx+ro, cy+ro,
-                           fill=C(BG_CARD), outline=C(BG), tags="arc")
+                           fill=C(BG_FIELD), outline=C(BG_CARD), tags="arc")
         cv.create_oval(cx-ri, cy-ri, cx+ri, cy+ri,
-                       fill=C(BG), outline=C(BG), tags="hole")
+                       fill=C(BG_CARD), outline=C(BG_CARD), tags="hole")
         cv.create_text(cx, cy-8, text=str(applied+skipped+failed),
                        fill=C(FG), font=F("heading"), tags="txt")
         cv.create_text(cx, cy+9, text="checked",
@@ -170,7 +187,7 @@ class StatsMixin:
         # Legend labels below donut
         cv.delete("leg")
         for i, (label, col) in enumerate([("● Applied", SUCCESS),
-                                           ("● Skipped", WARNING),
+                                           ("● Skipped", _SKIP),
                                            ("● Failed",  DANGER)]):
             cv.create_text(5, 138 + i * 14, text=label,
                            fill=C(col), font=F("small"), anchor="w", tags="leg")
@@ -221,7 +238,7 @@ class StatsMixin:
         # Track rows by position; only destroy/create if count changed
         self._job_expanded = None
         STATUS_ICON = {"applied":"✓","skipped":"−","failed":"✕","matched":"▶","resume_ready":"▶","scanning":"●"}
-        STATUS_COL  = {"applied":SUCCESS,"skipped":WARNING,"failed":DANGER,"matched":ACCENT,"resume_ready":ACCENT,"scanning":MUTED}
+        STATUS_COL  = {"applied":SUCCESS,"skipped":MUTED,"failed":DANGER,"matched":QUEUED,"resume_ready":QUEUED,"scanning":MUTED}
         DECISION    = {"applied":"Applied","skipped":"Skipped","failed":"Failed","matched":"Queued","resume_ready":"Ready to apply","scanning":"Analyzing..."}
 
         def _badge(job, status, decision, s_col):
@@ -277,7 +294,7 @@ class StatsMixin:
                 try:
                     sv["icon_lbl"].configure(text_color=s_col)
                     sv["score_lbl"].configure(text_color=bar_col)
-                    sv["badge_lbl"].configure(fg_color=b_col)
+                    sv["badge_lbl"].configure(text_color=b_col)
                     sv["bar_fill"].configure(width=max(2, int(score / 100 * 80)),
                                              fg_color=bar_col)
                     key = (title, company, when)
@@ -293,8 +310,9 @@ class StatsMixin:
                 continue   # skip widget creation below
 
             outer = ctk.CTkFrame(self._job_scroll, fg_color=BG_CARD,
-                                  corner_radius=8, cursor="hand2")
-            outer.pack(fill="x", pady=2)
+                                  corner_radius=10, cursor="hand2",
+                                  border_width=1, border_color=LINE)
+            outer.pack(fill="x", pady=3)
             outer.grid_columnconfigure(0, weight=1)
 
             # Summary row
@@ -340,8 +358,8 @@ class StatsMixin:
             det = ctk.CTkFrame(outer, fg_color="transparent")
             # NOT packed yet
 
-            ctk.CTkFrame(det, height=1, fg_color=BG_HOVER
-                          ).pack(fill="x", padx=4)
+            ctk.CTkFrame(det, height=1, fg_color=LINE
+                          ).pack(fill="x", padx=10)
             det_inner = ctk.CTkFrame(det, fg_color="transparent")
             det_inner.pack(fill="x", padx=12, pady=8)
 
@@ -354,8 +372,8 @@ class StatsMixin:
             _sv_match  = ctk.StringVar(value=f"  Match {score_txt}{sk_txt}")
             _sv_reason = ctk.StringVar(value=reason)
             _badge_lbl = ctk.CTkLabel(badge_row, textvariable=_sv_badge,
-                                      fg_color=_sv_badge_col, corner_radius=4,
-                                      font=F("small_b"), text_color=BG)
+                                      fg_color=BG_FIELD, corner_radius=8,
+                                      font=F("small_b"), text_color=_sv_badge_col)
             _badge_lbl.pack(side="left")
             ctk.CTkLabel(badge_row, textvariable=_sv_match,
                          font=F("small"), text_color=FG_DIM).pack(side="left")
@@ -417,8 +435,11 @@ class StatsMixin:
             applied_old = get_reapply_candidates(session_start=cutoff)
 
             running = bool(self._runner and self._runner.running())
+            can_queue = bool(queued) and not running
             self._queue_btn.configure(
-                state="normal" if queued and not running else "disabled",
+                state="normal" if can_queue else "disabled",
+                fg_color=ACCENT if can_queue else BG_FIELD,
+                text_color="#FFFFFF" if can_queue else MUTED,
                 text="Apply to queued jobs (%d)" % len(queued) if queued
                      else "Apply to queued jobs")
             self._review_btn.configure(

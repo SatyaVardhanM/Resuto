@@ -19,7 +19,7 @@ import queue
 import time
 
 from frontend.constants import (
-    BG, BG_CARD, BG_FIELD, BG_HOVER,
+    BG, BG_CARD, BG_FIELD, BG_HOVER, BG_SIDE, LINE, ACCENT_TXT, QUEUED,
     ACCENT, ACCENT_HV, DANGER, SUCCESS, MUTED,
     FG, FG_SOFT, FG_DIM, F,
 )
@@ -111,7 +111,7 @@ Keep responses conversational — 2-5 sentences is usually right. Longer if you'
     def __init__(self, parent, resume_path: str, api_key: str,
                  xml_out: str, on_done=None):
         super().__init__(parent)
-        self.title("Resume Chat")
+        self.title("Resuto — Resume chat")
         self.geometry("760x600")
         self.resizable(True, True)
         self.minsize(620, 520)
@@ -136,9 +136,12 @@ Keep responses conversational — 2-5 sentences is usually right. Longer if you'
         self.grid_rowconfigure(1, weight=1)
 
         # Header
-        hdr = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=0, height=52)
+        hdr = ctk.CTkFrame(self, fg_color=BG_SIDE, corner_radius=0, height=56)
         hdr.grid(row=0, column=0, sticky="ew"); hdr.grid_propagate(False)
-        ctk.CTkLabel(hdr, text=f"💬  Chat with {self.BOT_NAME}",
+        hdr.pack_propagate(False)
+        ctk.CTkFrame(hdr, height=1, fg_color=LINE, corner_radius=0
+                     ).place(relx=0, rely=1.0, relwidth=1, anchor="sw")
+        ctk.CTkLabel(hdr, text=f"Chat with {self.BOT_NAME}",
                      font=F("heading"), text_color=FG).pack(side="left", padx=20)
         self._status_lbl = ctk.CTkLabel(hdr, text="Reading your resume...",
                                          font=F("small"), text_color=FG_DIM)
@@ -151,20 +154,23 @@ Keep responses conversational — 2-5 sentences is usually right. Longer if you'
         self._chat_scroll.grid_columnconfigure(0, weight=1)
 
         # Input area
-        inp = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=0, height=90)
+        inp = ctk.CTkFrame(self, fg_color=BG_SIDE, corner_radius=0, height=90)
         inp.grid(row=2, column=0, sticky="ew"); inp.grid_propagate(False)
+        ctk.CTkFrame(inp, height=1, fg_color=LINE, corner_radius=0
+                     ).place(relx=0, rely=0, relwidth=1)
         inp.grid_columnconfigure(0, weight=1)
 
         self._input = ctk.CTkTextbox(inp, height=52, font=F("body"),
                                       fg_color=BG_FIELD, text_color=FG,
-                                      corner_radius=8)
+                                      border_width=1, border_color=LINE,
+                                      corner_radius=10)
         self._input.grid(row=0, column=0, sticky="ew", padx=(14, 8), pady=18)
         self._input.bind("<Return>",       self._on_enter)
         self._input.bind("<Shift-Return>", lambda e: None)  # allow newline
 
         self._send_btn = ctk.CTkButton(
             inp, text="Send  ↵", width=100, height=52,
-            font=F("label_b"), corner_radius=8,
+            font=F("label_b"), corner_radius=10, text_color="#FFFFFF",
             command=self._send, state="disabled")
         self._send_btn.grid(row=0, column=1, padx=(0, 14), pady=18)
 
@@ -183,10 +189,10 @@ Keep responses conversational — 2-5 sentences is usually right. Longer if you'
         row.grid_columnconfigure(1, weight=1)
 
         # Avatar
-        ctk.CTkLabel(row, text="🤖", font=F("body"),
-                     width=32).grid(row=0, column=0, sticky="nw", padx=(0, 8))
+        self._avatar(row).grid(row=0, column=0, sticky="nw", padx=(0, 8))
 
-        bubble = ctk.CTkFrame(row, fg_color=BG_CARD, corner_radius=12)
+        bubble = ctk.CTkFrame(row, fg_color=BG_CARD, corner_radius=12,
+                              border_width=1, border_color=LINE)
         bubble.grid(row=0, column=1, sticky="w")
         ctk.CTkLabel(bubble, text=text, font=F("body"),
                      text_color=FG, wraplength=460,
@@ -212,8 +218,9 @@ Keep responses conversational — 2-5 sentences is usually right. Longer if you'
         """Show '...' while bot is thinking. Returns the frame to remove later."""
         row = ctk.CTkFrame(self._chat_scroll, fg_color="transparent")
         row.pack(fill="x", padx=14, pady=(4, 2), anchor="w")
-        ctk.CTkLabel(row, text="🤖", font=F("body"), width=32).pack(side="left")
-        bubble = ctk.CTkFrame(row, fg_color=BG_CARD, corner_radius=12)
+        self._avatar(row).pack(side="left", padx=(0, 8))
+        bubble = ctk.CTkFrame(row, fg_color=BG_CARD, corner_radius=12,
+                              border_width=1, border_color=LINE)
         bubble.pack(side="left")
         ctk.CTkLabel(bubble, text="  ...  ", font=F("body"),
                      text_color=MUTED).pack(padx=14, pady=10)
@@ -223,6 +230,19 @@ Keep responses conversational — 2-5 sentences is usually right. Longer if you'
     def _remove_typing(self, indicator):
         try: indicator.destroy()
         except Exception: pass
+
+    def _avatar(self, parent):
+        """Resuto logo as the chat avatar (falls back to a letter)."""
+        try:
+            from frontend.branding import logo_image
+            img = logo_image(28)
+        except Exception:
+            img = None
+        if img is not None:
+            return ctk.CTkLabel(parent, text="", image=img, width=32)
+        return ctk.CTkLabel(parent, text="R", font=F("small_b"), width=32,
+                            height=32, corner_radius=8, fg_color=ACCENT,
+                            text_color="#FFFFFF")
 
     def _scroll_to_bottom(self):
         self.after(50, lambda: self._chat_scroll._parent_canvas.yview_moveto(1.0))
@@ -378,7 +398,7 @@ Keep responses conversational — 2-5 sentences is usually right. Longer if you'
     def _enhance_with_alex(self):
         """Remove the choice screen and start the chat flow."""
         self._choice_frame.destroy()
-        self.title("Resume Chat")
+        self.title("Resuto — Resume chat")
         self._start_chat()
 
     def _build_xml_direct(self):
@@ -720,7 +740,7 @@ class ProfileViewWindow(ctk.CTkToplevel):
 
     def __init__(self, parent, xml_path: str):
         super().__init__(parent)
-        self.title("Resume Profile")
+        self.title("Resuto — Resume profile")
         self.geometry("700x620")
         self.resizable(True, True)
         self.minsize(560, 400)
@@ -730,9 +750,12 @@ class ProfileViewWindow(ctk.CTkToplevel):
         self.grid_rowconfigure(1, weight=1)
 
         # Header
-        hdr = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=0, height=52)
+        hdr = ctk.CTkFrame(self, fg_color=BG_SIDE, corner_radius=0, height=56)
         hdr.grid(row=0, column=0, sticky="ew"); hdr.grid_propagate(False)
-        ctk.CTkLabel(hdr, text="Resume Profile",
+        hdr.pack_propagate(False)
+        ctk.CTkFrame(hdr, height=1, fg_color=LINE, corner_radius=0
+                     ).place(relx=0, rely=1.0, relwidth=1, anchor="sw")
+        ctk.CTkLabel(hdr, text="Resume profile",
                      font=F("heading"), text_color=FG
                      ).pack(side="left", padx=20, pady=10)
         ctk.CTkButton(hdr, text="Close", width=80, height=32,
@@ -757,9 +780,9 @@ class ProfileViewWindow(ctk.CTkToplevel):
 
     def _section(self, parent, title: str):
         ctk.CTkLabel(parent, text=title, font=F("label_b"),
-                     text_color=ACCENT, anchor="w"
+                     text_color=ACCENT_TXT, anchor="w"
                      ).pack(fill="x", padx=24, pady=(18, 4))
-        ctk.CTkFrame(parent, height=1, fg_color=BG_HOVER
+        ctk.CTkFrame(parent, height=1, fg_color=LINE
                      ).pack(fill="x", padx=24, pady=(0, 6))
 
     def _row(self, parent, label: str, value: str):
@@ -912,7 +935,7 @@ class ReviewWindow(ctk.CTkToplevel):
     def __init__(self, parent, candidates: list, api_key: str,
                  runner=None, on_done=None):
         super().__init__(parent)
-        self.title("Review Old Applications")
+        self.title("Resuto — Review applications")
         self.geometry("720x580")
         self.minsize(580, 400)
         self.resizable(True, True)
@@ -968,7 +991,8 @@ class ReviewWindow(ctk.CTkToplevel):
         self._checks = []
         for job in self._candidates:
             var  = ctk.BooleanVar(value=False)
-            card = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=10)
+            card = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=12,
+                                border_width=1, border_color=LINE)
             card.pack(fill="x", pady=(0,8))
             card.grid_columnconfigure(1, weight=1)
 
@@ -987,7 +1011,7 @@ class ReviewWindow(ctk.CTkToplevel):
 
             if rtype == "queued":
                 when = "Queued — resume ready, not yet applied"
-                badge_col = ACCENT
+                badge_col = QUEUED
                 badge_txt = "Queued"
             else:
                 when = ("Applied %d day(s) ago" % days) if days >= 0 else "Previously applied"
@@ -1002,8 +1026,8 @@ class ReviewWindow(ctk.CTkToplevel):
                          font=F("label_b"), text_color=FG,
                          anchor="w").grid(row=0, column=0, sticky="w")
             ctk.CTkLabel(hdr_row, text="  %s  " % badge_txt,
-                         fg_color=badge_col, corner_radius=4,
-                         font=F("tiny"), text_color=BG
+                         fg_color=BG_FIELD, corner_radius=8,
+                         font=F("tiny"), text_color=badge_col
                          ).grid(row=0, column=1, padx=(8,0))
             ctk.CTkLabel(card,
                          text="%s  ·  Match %d%%  |  %s" % (when, score, reason),
@@ -1024,9 +1048,9 @@ class ReviewWindow(ctk.CTkToplevel):
         self._status_lbl.grid(row=0, column=0, sticky="w")
 
         self._start_btn = ctk.CTkButton(
-            foot, text="▶  Start Review",
-            height=40, font=F("body_b"),
-            fg_color=ACCENT, hover_color=ACCENT_HV,
+            foot, text="▶  Start review",
+            height=40, font=F("body_b"), corner_radius=10,
+            fg_color=ACCENT, hover_color=ACCENT_HV, text_color="#FFFFFF",
             command=self._start_review)
         self._start_btn.grid(row=0, column=1, sticky="e")
 

@@ -502,7 +502,7 @@ class HistoryMixin:
         import customtkinter as ctk
 
         popup = ctk.CTkToplevel(self)
-        popup.title("Clear All History")
+        popup.title("Resuto — Clear history")
         popup.geometry("440x260")
         popup.resizable(False, False)
         popup.grab_set()
@@ -657,7 +657,7 @@ class HistoryMixin:
         import json as _json, os as _os
 
         popup = ctk.CTkToplevel(self)
-        popup.title("Add Real Numbers - Improve Resume Quality")
+        popup.title("Resuto — Add real numbers")
         popup.geometry("680x600")
         popup.resizable(False, True)
         popup.grab_set()
