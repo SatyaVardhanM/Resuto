@@ -26,21 +26,62 @@ def _get_bot_script() -> Path:
 
 BOT_SCRIPT = _get_bot_script()
 
-# ── Palette (matches CTk dark theme) ─────────────────────────────
-BG        = "#0F1117"
-BG_CARD   = "#1C1F26"
-BG_FIELD  = "#2A2D35"
-BG_HOVER  = "#252830"
-ACCENT    = "#5B6AF0"
-ACCENT_HV = "#4A58D4"   # hover shade
-DANGER    = "#E84545"
-SUCCESS   = "#22C55E"
-WARNING   = "#F59E0B"
-STRETCH   = "#F59E0B"   # amber — same as WARNING
-MUTED     = "#6B7280"
-FG        = "#F1F2F4"
-FG_SOFT   = "#C8CBD2"
-FG_DIM    = "#8B8FA8"
+# ── Palette ─────────────────────────────────────────────────────
+# Every colour is a (light, dark) pair. CustomTkinter widgets accept the
+# pair directly and switch automatically with the appearance mode.
+# For plain tkinter (Canvas, Text tags) use C(colour) to get the hex
+# for the current mode.
+BG        = ("#F5F6FA", "#0F1014")   # window background
+BG_SIDE   = ("#FFFFFF", "#121318")   # top bar / side menus
+BG_CARD   = ("#FFFFFF", "#17181E")   # cards
+BG_FIELD  = ("#F1F2F7", "#1D1F27")   # inputs, chips, secondary buttons
+BG_HOVER  = ("#E9EBF2", "#24262F")
+LINE      = ("#E4E6EE", "#262833")   # 1px borders
+ACCENT    = "#5B6AF0"                # Resuto indigo (same in both modes)
+ACCENT_HV = "#4A58D4"                # hover shade
+ACCENT_SOFT = ("#EEF0FF", "#23264A") # selected nav pill / tags
+ACCENT_TXT  = ("#3F4BC9", "#9AA6FF") # indigo text that reads on the background
+DANGER    = ("#D92D20", "#E84545")
+SUCCESS   = ("#15803D", "#22C55E")
+WARNING   = ("#B45309", "#F59E0B")
+STRETCH   = WARNING                  # amber — same as WARNING
+QUEUED    = ("#3F4BC9", "#8C97FF")   # "queued" status
+MUTED     = ("#6B7082", "#828899")   # 4.5:1+ on cards in both modes
+FG        = ("#151720", "#EEF0F5")
+FG_SOFT   = ("#3A3F4E", "#C8CBD2")
+FG_DIM    = ("#555B6C", "#A9ADBD")
+
+
+def is_dark() -> bool:
+    try:
+        return ctk.get_appearance_mode().lower() == "dark"
+    except Exception:
+        return True
+
+
+def C(colour):
+    """Resolve a (light, dark) pair to the hex for the current mode."""
+    if isinstance(colour, (tuple, list)):
+        return colour[1] if is_dark() else colour[0]
+    return colour
+
+
+def load_appearance() -> str:
+    """Saved appearance: 'dark' (default), 'light' or 'system'."""
+    try:
+        from core.settings import load_all
+        v = str(load_all().get("appearance", "dark") or "dark").lower()
+        return v if v in ("dark", "light", "system") else "dark"
+    except Exception:
+        return "dark"
+
+
+def save_appearance(mode: str) -> None:
+    try:
+        from core.settings import update
+        update(appearance=mode)
+    except Exception:
+        pass
 
 
 # ── Settings (single file: Documents\Resuto\local_settings.json) ──

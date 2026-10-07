@@ -325,7 +325,7 @@ Keep responses conversational — 2-5 sentences is usually right. Longer if you'
                      wraplength=200, justify="center").pack(padx=16, pady=(0,16), fill="x")
         ctk.CTkButton(card_b, text="Chat with Alex  →",
                       height=38, font=F("body_b"),
-                      fg_color=BG_CARD, hover_color=BG_HOVER,
+                      fg_color=BG_CARD, text_color=FG, hover_color=BG_HOVER,
                       command=self._enhance_with_alex).pack(
                       fill="x", padx=16, pady=(0,20))
 
@@ -736,7 +736,7 @@ class ProfileViewWindow(ctk.CTkToplevel):
                      font=F("heading"), text_color=FG
                      ).pack(side="left", padx=20, pady=10)
         ctk.CTkButton(hdr, text="Close", width=80, height=32,
-                      font=F("small"), fg_color=BG_FIELD,
+                      font=F("small"), fg_color=BG_FIELD, text_color=FG,
                       hover_color=BG_HOVER,
                       command=self.destroy
                       ).pack(side="right", padx=16, pady=10)
@@ -952,11 +952,11 @@ class ReviewWindow(ctk.CTkToplevel):
         ctk.CTkLabel(hdr, text="Select jobs to re-apply",
                      font=F("body_b"), text_color=FG).pack(side="left")
         ctk.CTkButton(hdr, text="Select All", width=90, height=28,
-                      font=F("small"), fg_color=BG_FIELD,
+                      font=F("small"), fg_color=BG_FIELD, text_color=FG,
                       hover_color=BG_HOVER,
                       command=self._select_all).pack(side="right")
         ctk.CTkButton(hdr, text="Clear All", width=90, height=28,
-                      font=F("small"), fg_color=BG_FIELD,
+                      font=F("small"), fg_color=BG_FIELD, text_color=FG,
                       hover_color=BG_HOVER,
                       command=self._clear_all).pack(side="right", padx=(0,8))
 
@@ -1164,7 +1164,7 @@ class ReviewWindow(ctk.CTkToplevel):
                       command=lambda: _send("d")
                       ).grid(row=0, column=0, padx=(0,8), sticky="ew")
         ctk.CTkButton(btn_row, text="—  Skip",
-                      fg_color=BG_FIELD, hover_color=BG_HOVER,
+                      fg_color=BG_FIELD, text_color=FG, hover_color=BG_HOVER,
                       height=44, font=F("body_b"),
                       command=lambda: _send("s")
                       ).grid(row=0, column=1, padx=(0,8), sticky="ew")

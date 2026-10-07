@@ -19,7 +19,7 @@ import re
 from frontend.constants import (
     BG, BG_CARD, BG_FIELD, BG_HOVER,
     ACCENT, DANGER, SUCCESS, WARNING, STRETCH, MUTED,
-    FG, FG_SOFT, FG_DIM, F,
+    FG, FG_SOFT, FG_DIM, F, C, LINE,
 )
 
 
@@ -53,7 +53,7 @@ class StatsMixin:
         self._review_btn = ctk.CTkButton(
             hdr, text="Re-apply review",
             height=30, font=F("small"),
-            fg_color=BG_FIELD, hover_color=BG_HOVER,
+            fg_color=BG_FIELD, text_color=FG, hover_color=BG_HOVER,
             state="disabled",
             command=self._open_review_window)
         self._review_btn.pack(side="right", padx=(0, 12))
@@ -111,7 +111,7 @@ class StatsMixin:
 
         # Donut canvas
         self._donut_cv = tk.Canvas(mid, width=130, height=180,
-                                    bg=BG, highlightthickness=0)
+                                    bg=C(BG), highlightthickness=0)
         self._donut_cv.grid(row=0, column=0, padx=(0, 16), sticky="n")
         self._draw_donut(0, 0, 0)
 
@@ -132,8 +132,15 @@ class StatsMixin:
         self._job_rows    = []
         self._job_expanded = None
 
+    def _redraw_donut(self):
+        """Redraw with the current theme's colours (called on theme change)."""
+        a, sk, fl = getattr(self, "_donut_last", (0, 0, 0))
+        self._draw_donut(a, sk, fl)
+
     def _draw_donut(self, applied: int, skipped: int, failed: int):
+        self._donut_last = (applied, skipped, failed)
         cv = self._donut_cv
+        cv.configure(bg=C(BG))
         cv.delete("arc","hole","txt")
         cx, cy, ro, ri = 65, 65, 52, 30
         total = applied + skipped + failed or 1
@@ -144,21 +151,21 @@ class StatsMixin:
                 # Tk draws NOTHING for a 360° arc — the ring vanished when
                 # every job had the same status (e.g. all skipped)
                 cv.create_oval(cx-ro, cy-ro, cx+ro, cy+ro,
-                               fill=col, outline=BG, width=3, tags="arc")
+                               fill=C(col), outline=C(BG), width=3, tags="arc")
             elif ext > 0.5:
                 cv.create_arc(cx-ro, cy-ro, cx+ro, cy+ro,
                               start=start, extent=ext,
-                              fill=col, outline=BG, width=3, tags="arc")
+                              fill=C(col), outline=C(BG), width=3, tags="arc")
             start += ext
         if applied+skipped+failed == 0:
             cv.create_oval(cx-ro, cy-ro, cx+ro, cy+ro,
-                           fill=BG_CARD, outline=BG, tags="arc")
+                           fill=C(BG_CARD), outline=C(BG), tags="arc")
         cv.create_oval(cx-ri, cy-ri, cx+ri, cy+ri,
-                       fill=BG, outline=BG, tags="hole")
+                       fill=C(BG), outline=C(BG), tags="hole")
         cv.create_text(cx, cy-8, text=str(applied+skipped+failed),
-                       fill=FG, font=F("heading"), tags="txt")
+                       fill=C(FG), font=F("heading"), tags="txt")
         cv.create_text(cx, cy+9, text="checked",
-                       fill=MUTED, font=F("tiny"), tags="txt")
+                       fill=C(MUTED), font=F("tiny"), tags="txt")
 
         # Legend labels below donut
         cv.delete("leg")
@@ -166,7 +173,7 @@ class StatsMixin:
                                            ("● Skipped", WARNING),
                                            ("● Failed",  DANGER)]):
             cv.create_text(5, 138 + i * 14, text=label,
-                           fill=col, font=F("small"), anchor="w", tags="leg")
+                           fill=C(col), font=F("small"), anchor="w", tags="leg")
         cv.configure(height=180)
 
     def _refresh_stats(self):

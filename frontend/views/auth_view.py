@@ -21,8 +21,10 @@ from tkinter import messagebox
 
 import customtkinter as ctk
 
+from frontend.branding import apply_window_icon, logo_image
+
 from frontend.constants import (
-    BG, BG_CARD, BG_FIELD, BG_HOVER,
+    BG, BG_CARD, BG_FIELD, BG_HOVER, LINE, ACCENT_TXT,
     ACCENT, ACCENT_HV, DANGER, SUCCESS, WARNING, MUTED,
     FG, FG_DIM, F, _FONT_FAMILY,
 )
@@ -32,7 +34,7 @@ from frontend.constants import (
 def _entry(parent, placeholder="", show=""):
     return ctk.CTkEntry(
         parent, placeholder_text=placeholder,
-        fg_color=BG_FIELD, border_color=ACCENT,
+        fg_color=BG_FIELD, border_color=LINE, border_width=1,
         text_color=FG, placeholder_text_color=MUTED,
         font=F("small"), show=show,
         corner_radius=8, height=38,
@@ -43,7 +45,8 @@ def _btn(parent, text, command, color=None, hover=None, **kw):
     return ctk.CTkButton(
         parent, text=text, command=command,
         fg_color=color or ACCENT, hover_color=hover or ACCENT_HV,
-        font=F("small"), corner_radius=10, height=40, **kw
+        text_color=(FG if color in (BG_HOVER, BG_FIELD, BG_CARD) else "#FFFFFF"),
+        font=F("small_b"), corner_radius=10, height=40, **kw
     )
 
 
@@ -75,7 +78,8 @@ class AccessWindow(ctk.CTkToplevel):
         self._mode = None           # "login" | "register" | "update_key"
 
         self.title("Resuto — Sign in")
-        self.geometry("460x560")
+        apply_window_icon(self, delay_ms=250)
+        self.geometry("460x620")
         self.resizable(False, False)
         self.configure(fg_color=BG)
         self.lift()
@@ -94,34 +98,38 @@ class AccessWindow(ctk.CTkToplevel):
         # ── Header
         hdr = ctk.CTkFrame(self, fg_color="transparent")
         hdr.pack(fill="x", padx=30, pady=(28, 0))
-        _label(hdr, "Resuto", "title").pack()
-        _label(hdr, "by Zetene", "tiny", MUTED).pack()
-        _label(hdr, "Smart resume tailoring", "small", MUTED).pack(pady=(6, 0))
+        _logo = logo_image(48)
+        if _logo is not None:
+            ctk.CTkLabel(hdr, text="", image=_logo).pack(pady=(0, 8))
+        _label(hdr, "Welcome to Resuto", "title").pack()
+        _label(hdr, "Smart resume tailoring", "small", MUTED).pack(pady=(4, 0))
 
-        # ── Choice buttons
-        choice = ctk.CTkFrame(self, fg_color="transparent")
-        choice.pack(fill="x", padx=30, pady=20)
+        # ── Log in / Create account switch (segmented look)
+        choice = ctk.CTkFrame(self, fg_color=BG_FIELD, corner_radius=10,
+                              border_width=1, border_color=LINE)
+        choice.pack(fill="x", padx=30, pady=(18, 14))
         choice.columnconfigure(0, weight=1)
         choice.columnconfigure(1, weight=1)
 
         self._login_tab_btn = ctk.CTkButton(
-            choice, text="Login",
+            choice, text="Log in",
             command=self._show_login,
-            fg_color=ACCENT, hover_color=ACCENT_HV,
-            font=F("small"), corner_radius=10, height=40,
+            fg_color=BG_CARD, hover_color=BG_HOVER, text_color=FG,
+            font=F("small_b"), corner_radius=8, height=32,
         )
-        self._login_tab_btn.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self._login_tab_btn.grid(row=0, column=0, sticky="ew", padx=(4, 2), pady=4)
 
         self._reg_tab_btn = ctk.CTkButton(
-            choice, text="Register",
+            choice, text="Create account",
             command=self._show_register,
-            fg_color=BG_CARD, hover_color=BG_HOVER,
-            font=F("small"), corner_radius=10, height=40,
+            fg_color="transparent", hover_color=BG_HOVER, text_color=FG_DIM,
+            font=F("small_b"), corner_radius=8, height=32,
         )
-        self._reg_tab_btn.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        self._reg_tab_btn.grid(row=0, column=1, sticky="ew", padx=(2, 4), pady=4)
 
         # ── Card area — forms swap in here
-        self._card = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=16)
+        self._card = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=16,
+                                  border_width=1, border_color=LINE)
         self._card.pack(fill="both", expand=True, padx=30, pady=(0, 24))
 
         # ── Status label (shared)
@@ -153,7 +161,7 @@ class AccessWindow(ctk.CTkToplevel):
         self._login_btn.pack(fill="x", padx=20, pady=(10, 6))
 
         _label(self._login_frame,
-               "New to Resuto? Click Register above.",
+               "New to Resuto? Choose Create account above.",
                "tiny", MUTED).pack(pady=(4, 16))
 
     # ── Register form ─────────────────────────────────────────────
@@ -179,7 +187,7 @@ class AccessWindow(ctk.CTkToplevel):
         self._reg_btn.pack(fill="x", padx=20, pady=(10, 6))
 
         _label(self._register_frame,
-               "Already registered? Click Login above.",
+               "Already registered? Choose Log in above.",
                "tiny", MUTED).pack(pady=(4, 16))
 
     # ── Update API key form ───────────────────────────────────────
@@ -209,7 +217,7 @@ class AccessWindow(ctk.CTkToplevel):
         self._back_btn.grid(row=0, column=0, sticky="ew", padx=(0, 4))
 
         self._update_btn = _btn(btn_row, "Submit for approval", self._do_update_key,
-             color=WARNING, hover="#C47000")
+             color=WARNING, hover=("#92400E", "#C47000"))
         self._update_btn.grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
     # ── Show / hide form panels ───────────────────────────────────
@@ -221,8 +229,8 @@ class AccessWindow(ctk.CTkToplevel):
         self._login_frame.pack(fill="both", expand=True)
         self._status.pack(pady=(0, 8))
         self._set_status("")
-        self._login_tab_btn.configure(fg_color=ACCENT)
-        self._reg_tab_btn.configure(fg_color=BG_CARD)
+        self._login_tab_btn.configure(fg_color=BG_CARD, text_color=FG)
+        self._reg_tab_btn.configure(fg_color="transparent", text_color=FG_DIM)
 
     def _show_register(self):
         self._mode = "register"
@@ -232,8 +240,8 @@ class AccessWindow(ctk.CTkToplevel):
         self._register_frame.pack(fill="both", expand=True)
         self._status.pack(pady=(0, 8))
         self._set_status("")
-        self._reg_tab_btn.configure(fg_color=ACCENT)
-        self._login_tab_btn.configure(fg_color=BG_CARD)
+        self._reg_tab_btn.configure(fg_color=BG_CARD, text_color=FG)
+        self._login_tab_btn.configure(fg_color="transparent", text_color=FG_DIM)
 
     def _show_update_key(self, prefill_email=""):
         self._mode = "update_key"

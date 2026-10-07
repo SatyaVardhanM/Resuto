@@ -8,6 +8,7 @@ Handles: API key, XML path, Chrome profile, job filters,
 import tkinter as tk
 from tkinter import messagebox
 from frontend.views.dialogs import IntakeWindow, ProfileViewWindow
+from frontend.branding import logo_image
 import json
 import os
 import sys
@@ -21,7 +22,8 @@ import time
 from frontend.constants import (
     BG, BG_CARD, BG_FIELD, BG_HOVER,
     ACCENT, ACCENT_HV, DANGER, SUCCESS, WARNING, MUTED,
-    FG, FG_SOFT, FG_DIM,
+    FG, FG_SOFT, FG_DIM, BG_SIDE, LINE, ACCENT_SOFT, ACCENT_TXT,
+    load_appearance, save_appearance,
     F, _FONT_FAMILY, _FONTS, base_size,
     _init_fonts, _load_font_pref,
     _settings_file, _load_api_key, _save_api_key, _clear_api_key,
@@ -34,13 +36,26 @@ class SettingsMixin:
 
     def _build_settings(self):
         f = self._tabs["settings"]
-        f.grid_columnconfigure(0, weight=1)
+        f.grid_columnconfigure(1, weight=1)
         f.grid_rowconfigure(0, weight=1)
+
+        # ── Side menu: jumps to each section; About at the bottom ──
+        nav = ctk.CTkFrame(f, width=200, corner_radius=0, fg_color=BG_SIDE)
+        nav.grid(row=0, column=0, sticky="nsw")
+        nav.grid_propagate(False)
+        nav.pack_propagate(False)
+        ctk.CTkFrame(f, width=1, corner_radius=0, fg_color=LINE
+                     ).grid(row=0, column=0, sticky="nse")
+        ctk.CTkLabel(nav, text="Settings", font=F("title"),
+                     text_color=FG).pack(anchor="w", padx=20, pady=(20, 12))
+        self._set_sections = {}
+        self._set_nav_btns = []
 
         # Scrollable container — content never gets cut off at any window size
         scroll = ctk.CTkScrollableFrame(f, fg_color="transparent", corner_radius=0)
-        scroll.grid(row=0, column=0, sticky="nsew")
+        scroll.grid(row=0, column=1, sticky="nsew")
         scroll.grid_columnconfigure(0, weight=1)
+        self._settings_scroll = scroll
         f = scroll   # everything below adds to scroll, not the raw tab
 
         row = [0]
@@ -48,19 +63,17 @@ class SettingsMixin:
             r = row[0]; row[0] += 1; return r
 
         def section_label(text):
-            ctk.CTkLabel(f, text=text, font=F("label_b"), text_color=FG
-                         ).grid(row=next_row(), column=0, sticky="w",
-                                padx=24, pady=(20, 6))
+            lbl = ctk.CTkLabel(f, text=text, font=F("body_b"), text_color=FG)
+            lbl.grid(row=next_row(), column=0, sticky="w", padx=24, pady=(20, 6))
+            self._set_sections[text] = lbl
 
         def section_card(**kw):
-            c = ctk.CTkFrame(f, fg_color=BG_CARD, corner_radius=10, **kw)
+            kw.setdefault("border_width", 1)
+            kw.setdefault("border_color", LINE)
+            c = ctk.CTkFrame(f, fg_color=BG_CARD, corner_radius=12, **kw)
             c.grid(row=next_row(), column=0, sticky="ew", padx=24, pady=(0, 4))
             c.grid_columnconfigure(0, weight=1)
             return c
-        # ── Title ─────────────────────────────────────────────────
-        ctk.CTkLabel(f, text="Settings", font=F("heading"),
-                     text_color=FG).grid(row=next_row(), column=0,
-                                          sticky="w", padx=24, pady=(24, 4))
 
         # ══ SECTION 0: API KEY ════════════════════════════════════
         section_label("Claude API Key")
@@ -77,7 +90,7 @@ class SettingsMixin:
             placeholder_text="sk-ant-api03-...")
         self._settings_key_entry.grid(row=0, column=0, sticky="ew")
         ctk.CTkButton(key_row, text="👁", width=38, height=38,
-                      fg_color=BG_FIELD, hover_color=BG_HOVER,
+                      fg_color=BG_FIELD, text_color=FG, hover_color=BG_HOVER,
                       font=F("body"),
                       command=self._toggle_key_visibility
                       ).grid(row=0, column=1, padx=(6, 0))
@@ -102,7 +115,7 @@ class SettingsMixin:
         self._key_status_lbl.grid(row=2, column=0, sticky="w", padx=16,
                                    pady=(0, 4))
         ctk.CTkButton(key_card, text="Validate key", height=30, width=110,
-                      font=F("small"), fg_color=BG_FIELD, hover_color=BG_HOVER,
+                      font=F("small"), fg_color=BG_FIELD, text_color=FG, hover_color=BG_HOVER,
                       command=self._validate_api_key
                       ).grid(row=2, column=0, sticky="e", padx=16, pady=(0, 14))
 
@@ -186,14 +199,14 @@ class SettingsMixin:
         self._view_profile_btn = ctk.CTkButton(
             btn_row, text="👁  View Profile",
             height=36, font=F("small"),
-            fg_color=BG_FIELD, hover_color=BG_HOVER,
+            fg_color=BG_FIELD, text_color=FG, hover_color=BG_HOVER,
             command=self._view_profile)
 
         # Always create download button — shown/hidden based on XML presence
         self._download_resume_btn = ctk.CTkButton(
             btn_row, text="⬇  Download Resume",
             height=36, font=F("small"),
-            fg_color=BG_FIELD, hover_color=BG_HOVER,
+            fg_color=BG_FIELD, text_color=FG, hover_color=BG_HOVER,
             command=self._download_sample_resume)
 
         # Only show if XML exists
@@ -205,7 +218,7 @@ class SettingsMixin:
         ctk.CTkButton(
             btn_row, text="🔄  Regenerate Prompts",
             height=36, font=F("small"),
-            fg_color=BG_FIELD, hover_color=BG_HOVER,
+            fg_color=BG_FIELD, text_color=FG, hover_color=BG_HOVER,
             command=self._regenerate_prompts_manual
         ).pack(side="left", padx=(8, 0))
 
@@ -288,7 +301,7 @@ class SettingsMixin:
 
         ctk.CTkButton(self._chrome_path_row, text="Browse",
                       width=80, height=36, font=F("small"),
-                      fg_color=BG_FIELD, hover_color=BG_HOVER,
+                      fg_color=BG_FIELD, text_color=FG, hover_color=BG_HOVER,
                       command=_browse_chrome
                       ).grid(row=0, column=1)
 
@@ -482,6 +495,21 @@ class SettingsMixin:
                              padx=16, pady=(0, 8))
 
         # ══ SECTION 3: TEXT SIZE ══════════════════════════════════
+        section_label("Appearance")
+        theme_card = section_card()
+        ctk.CTkLabel(theme_card, text="Theme", font=F("small_b"), text_color=FG
+                     ).grid(row=0, column=0, sticky="w", padx=18, pady=(14, 4))
+        _labels = {"dark": "Dark", "light": "Light", "system": "Follow Windows"}
+        self._theme_seg = ctk.CTkSegmentedButton(
+            theme_card, values=["Dark", "Light", "Follow Windows"],
+            font=F("small_b"), height=32, command=self._on_theme_choice)
+        self._theme_seg.set(_labels.get(load_appearance(), "Dark"))
+        self._theme_seg.grid(row=1, column=0, sticky="w", padx=18, pady=(0, 6))
+        ctk.CTkLabel(theme_card,
+                     text="The logo and window icon switch with the theme.",
+                     font=F("tiny"), text_color=MUTED
+                     ).grid(row=2, column=0, sticky="w", padx=18, pady=(0, 14))
+
         section_label("Text Size")
         size_card = section_card()
         size_card.grid_columnconfigure(1, weight=1)
@@ -511,9 +539,74 @@ class SettingsMixin:
                      font=F("small"), text_color=MUTED
                      ).grid(row=2, column=0, columnspan=3, pady=(0, 8))
 
+        # ── About footer: logo · Resuto <version> · by Zetene ─────
+        try:
+            from core.config import APP_VERSION as _ver
+        except Exception:
+            _ver = ""
+        about = ctk.CTkFrame(nav, fg_color="transparent")
+        about.pack(side="bottom", anchor="w", padx=18, pady=18)
+        _logo = logo_image(32)
+        if _logo is not None:
+            ctk.CTkLabel(about, text="", image=_logo).pack(side="left", padx=(0, 10))
+        about_txt = ctk.CTkFrame(about, fg_color="transparent")
+        about_txt.pack(side="left")
+        ctk.CTkLabel(about_txt, text=("Resuto " + _ver).strip(),
+                     font=F("small_b"), text_color=FG_SOFT
+                     ).pack(anchor="w")
+        ctk.CTkLabel(about_txt, text="by Zetene", font=F("tiny"),
+                     text_color=MUTED).pack(anchor="w")
+
+        # Side-menu entries (built last so every section exists)
+        for title, key in (("Account", "Claude API Key"),
+                           ("Work authorization", "Work Authorization"),
+                           ("Resume", "Resume Profile"),
+                           ("Browser", "Browser Profile"),
+                           ("Job search", "Job Preferences"),
+                           ("Appearance", "Appearance")):
+            if key not in self._set_sections:
+                continue
+            b = ctk.CTkButton(nav, text=title, anchor="w", height=34,
+                              corner_radius=8, font=F("small_b"),
+                              fg_color="transparent", hover_color=BG_HOVER,
+                              text_color=FG_DIM,
+                              command=lambda k=key: self._settings_goto(k))
+            b.pack(fill="x", padx=12, pady=1)
+            b._section_key = key
+            self._set_nav_btns.append(b)
+        self._settings_highlight("Claude API Key")
+
     # ── Resume profile helpers ────────────────────────────────────
 
     # ── Chrome profile helpers ───────────────────────────────────
+
+    def _settings_highlight(self, key: str):
+        for b in getattr(self, "_set_nav_btns", []):
+            on = getattr(b, "_section_key", "") == key
+            b.configure(fg_color=ACCENT_SOFT if on else "transparent",
+                        text_color=ACCENT_TXT if on else FG_DIM)
+
+    def _settings_goto(self, key: str):
+        """Scroll the settings page so the section starts at the top."""
+        self._settings_highlight(key)
+        try:
+            sc = self._settings_scroll
+            w = self._set_sections[key]
+            sc.update_idletasks()
+            total = max(1, sc.winfo_height())
+            sc._parent_canvas.yview_moveto(max(0.0, (w.winfo_y() - 8) / total))
+        except Exception:
+            pass
+
+    def _on_theme_choice(self, label: str):
+        mode = {"Dark": "dark", "Light": "light",
+                "Follow Windows": "system"}.get(label, "dark")
+        save_appearance(mode)
+        ctk.set_appearance_mode(mode)
+        try:
+            self.after(50, self._on_theme_changed)
+        except Exception:
+            pass
 
     def _load_chrome_profile_path(self) -> str:
         """Return stored custom chrome profile path, or '' for default."""

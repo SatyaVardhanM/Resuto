@@ -66,10 +66,11 @@ class HistoryMixin:
         ctk.CTkLabel(hdr, text="Job History",
                      font=F("body_b"), text_color=FG).pack(side="left")
         ctk.CTkButton(hdr, text="↻  Refresh", width=100, height=30,
-                      font=F("small"), fg_color=BG_CARD, hover_color=BG_HOVER,
+                      font=F("small"), fg_color=BG_CARD, text_color=FG, hover_color=BG_HOVER,
                       command=self._load_history).pack(side="right")
-        ctk.CTkButton(hdr, text="🗑  Clear All History", width=150, height=30,
-                      font=F("small"), fg_color="#5C1010", hover_color=DANGER,
+        ctk.CTkButton(hdr, text="Clear history", width=150, height=30,
+                      font=F("small"), fg_color="transparent", hover_color=BG_HOVER,
+                      text_color=DANGER, border_width=1, border_color=DANGER,
                       command=self._confirm_clear_history).pack(side="right", padx=(0,8))
 
         # Delete selected button (shown only when matched rows selected)
@@ -107,7 +108,7 @@ class HistoryMixin:
         pg.grid(row=3, column=0, sticky="ew", padx=20, pady=6)
         self._h_prev_btn = ctk.CTkButton(
             pg, text="← Prev", width=80, height=28, font=F("small"),
-            fg_color=BG_CARD, hover_color=BG_HOVER,
+            fg_color=BG_CARD, text_color=FG, hover_color=BG_HOVER,
             command=self._h_prev_page)
         self._h_prev_btn.pack(side="left")
         self._h_page_lbl = ctk.CTkLabel(pg, text="", font=F("small"),
@@ -115,7 +116,7 @@ class HistoryMixin:
         self._h_page_lbl.pack(side="left", padx=12)
         self._h_next_btn = ctk.CTkButton(
             pg, text="Next →", width=80, height=28, font=F("small"),
-            fg_color=BG_CARD, hover_color=BG_HOVER,
+            fg_color=BG_CARD, text_color=FG, hover_color=BG_HOVER,
             command=self._h_next_page)
         self._h_next_btn.pack(side="left")
 
@@ -509,21 +510,21 @@ class HistoryMixin:
         ctk.CTkLabel(popup,
             text="Clear All Job History?",
             font=ctk.CTkFont(size=16, weight="bold"),
-            text_color="#FF6B6B").pack(pady=(24,8))
+            text_color=DANGER).pack(pady=(24,8))
 
         ctk.CTkLabel(popup,
             text="This permanently deletes ALL job records from the database.\n"
                  "Applied jobs, resumes queued, history — everything gone.\n\n"
                  "The generated DOCX/PDF files on disk are NOT deleted.",
             font=ctk.CTkFont(size=12),
-            text_color="#AAAAAA",
+            text_color=FG_DIM,
             justify="center").pack(pady=(0,20))
 
         btn_row = ctk.CTkFrame(popup, fg_color="transparent")
         btn_row.pack(fill="x", padx=24, pady=(0,20))
 
         ctk.CTkButton(btn_row, text="Cancel",
-            height=38, fg_color="#3A3A3A", hover_color="#4A4A4A",
+            height=38, fg_color=BG_FIELD, hover_color=BG_HOVER, text_color=FG,
             font=ctk.CTkFont(size=12),
             command=popup.destroy).pack(side="left", expand=True, fill="x", padx=(0,8))
 
@@ -664,7 +665,7 @@ class HistoryMixin:
         ctk.CTkLabel(popup,
             text="Your profile is missing real numbers",
             font=ctk.CTkFont(size=16, weight="bold"),
-            text_color="#FFD580").pack(pady=(20,4))
+            text_color=WARNING).pack(pady=(20,4))
 
         desc = (
             "Without real metrics, Claude estimates numbers like 20%% improvement. "
@@ -672,10 +673,10 @@ class HistoryMixin:
             "Fill in what you remember — rough numbers are fine."
         )
         ctk.CTkLabel(popup, text=desc,
-            font=ctk.CTkFont(size=12), text_color="#AAAAAA",
+            font=ctk.CTkFont(size=12), text_color=FG_DIM,
             wraplength=620, justify="center").pack(pady=(0,12))
 
-        scroll = ctk.CTkScrollableFrame(popup, height=380, fg_color="#1A1A1A")
+        scroll = ctk.CTkScrollableFrame(popup, height=380, fg_color=BG)
         scroll.pack(fill="x", padx=20)
 
         questions = [
@@ -689,21 +690,21 @@ class HistoryMixin:
         for job in missing:
             company = job.get("company","")
             title   = job.get("title","")
-            jf = ctk.CTkFrame(scroll, fg_color="#242424", corner_radius=8)
+            jf = ctk.CTkFrame(scroll, fg_color=BG_CARD, corner_radius=8)
             jf.pack(fill="x", padx=4, pady=(8,2))
             ctk.CTkLabel(jf, text="%s  @  %s" % (title, company),
                 font=ctk.CTkFont(size=13, weight="bold"),
-                text_color="#FFFFFF").pack(anchor="w", padx=12, pady=(10,2))
+                text_color=FG).pack(anchor="w", padx=12, pady=(10,2))
             sample = job.get("sample","")[:70]
             ctk.CTkLabel(jf, text="Sample: %s..." % sample,
-                font=ctk.CTkFont(size=11), text_color="#666666").pack(
+                font=ctk.CTkFont(size=11), text_color=MUTED).pack(
                 anchor="w", padx=12, pady=(0,6))
             entries[company] = {}
             for key, label, placeholder in questions:
                 row = ctk.CTkFrame(jf, fg_color="transparent")
                 row.pack(fill="x", padx=12, pady=2)
                 ctk.CTkLabel(row, text=label + ":",
-                    font=ctk.CTkFont(size=11), text_color="#AAAAAA",
+                    font=ctk.CTkFont(size=11), text_color=FG_DIM,
                     width=130, anchor="w").pack(side="left")
                 e = ctk.CTkEntry(row, placeholder_text=placeholder,
                     font=ctk.CTkFont(size=11), height=30)
@@ -736,7 +737,7 @@ class HistoryMixin:
         btn_row = ctk.CTkFrame(popup, fg_color="transparent")
         btn_row.pack(fill="x", padx=20, pady=16)
         ctk.CTkButton(btn_row, text="Skip - Use AI estimates",
-            height=38, fg_color="#3A3A3A", hover_color="#4A4A4A",
+            height=38, fg_color=BG_FIELD, hover_color=BG_HOVER, text_color=FG,
             font=ctk.CTkFont(size=12),
             command=_skip).pack(side="left", expand=True, fill="x", padx=(0,8))
         ctk.CTkButton(btn_row, text="Save Numbers & Start Run",
@@ -757,15 +758,15 @@ class HistoryMixin:
         )
         try:
             import customtkinter as ctk
-            banner = ctk.CTkFrame(self, fg_color="#7C4F00", corner_radius=6)
+            banner = ctk.CTkFrame(self, fg_color=("#FFF8E6", "#3A2A08"), corner_radius=6)
             banner.pack(fill="x", padx=16, pady=(4,0))
             ctk.CTkLabel(banner, text="⚠  " + msg,
                          font=ctk.CTkFont(size=11),
-                         text_color="#FFD580",
+                         text_color=WARNING,
                          wraplength=700,
                          justify="left").pack(padx=12, pady=6, anchor="w")
             ctk.CTkButton(banner, text="Dismiss", width=70, height=24,
-                          fg_color="#A0620A",
+                          fg_color=WARNING, text_color="#FFFFFF",
                           command=banner.destroy).pack(padx=12, pady=(0,6), anchor="e")
         except Exception:
             pass

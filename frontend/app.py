@@ -30,14 +30,24 @@ import tkinter as tk
 from tkinter import messagebox
 
 # ── CustomTkinter global config ───────────────────────────────────
-ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("blue")
+# Appearance (dark / light / follow Windows) comes from Settings → Appearance.
+# Widget colours come from the Resuto indigo theme file.
+try:
+    from frontend.constants import load_appearance as _load_appearance
+    ctk.set_appearance_mode(_load_appearance())
+except Exception:
+    ctk.set_appearance_mode("dark")
+try:
+    ctk.set_default_color_theme(str(Path(__file__).resolve().parent / "resuto_theme.json"))
+except Exception:
+    ctk.set_default_color_theme("blue")
 
 from frontend.constants import (
     APP_TITLE, BOT_SCRIPT,
-    BG, BG_CARD, BG_FIELD, BG_HOVER,
-    ACCENT, ACCENT_HV, DANGER, SUCCESS, WARNING, STRETCH, MUTED,
-    FG, FG_SOFT, FG_DIM,
+    BG, BG_CARD, BG_FIELD, BG_HOVER, BG_SIDE, LINE,
+    ACCENT, ACCENT_HV, ACCENT_SOFT, ACCENT_TXT,
+    DANGER, SUCCESS, WARNING, STRETCH, MUTED,
+    FG, FG_SOFT, FG_DIM, C,
     F, _init_fonts, _FONTS, _BASE_SIZE, _load_font_pref,
     _settings_file, _load_api_key, _save_api_key, _clear_api_key,
     _save_font_pref,
@@ -173,6 +183,10 @@ from frontend.views.stats_view     import StatsMixin
 from frontend.views.settings_view  import SettingsMixin
 from frontend.views.dialogs        import IntakeWindow, ProfileViewWindow, ReviewWindow
 from frontend.views.auth_view      import run_access_gate
+from frontend.branding             import (set_app_id, apply_window_icon, logo_image,
+                                           refresh_window_icons)
+from frontend.branding             import install_toplevel_icons
+install_toplevel_icons()
 
 # ── Main application ───────────────────────────────────────────────
 class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
@@ -180,7 +194,9 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
     # ── Canvas row metrics ────────────────────────────────────────
 
     def __init__(self):
+        set_app_id()          # taskbar shows Resuto's icon, not python.exe's
         super().__init__()
+        apply_window_icon(self)
         # Fonts MUST be created after super().__init__() — CTkFont needs a live Tk root
         _init_fonts(_load_font_pref())
         # API key StringVar — loaded from settings (may be empty if user chose not to save)
@@ -213,8 +229,8 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
         self.attributes("-alpha", 1.0)
 
         self.title(APP_TITLE)
-        self.geometry("920x640")
-        self.minsize(820, 560)
+        self.geometry("1000x680")
+        self.minsize(900, 600)
 
         self._q             = queue.Queue()
         self._runner        = None
@@ -266,117 +282,77 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
             pass
 
     # ── Build ─────────────────────────────────────────────────────
+    # Layout: top bar (logo · Home · Activity · Settings · status),
+    # page area, slim status line. Activity hosts the Stats, History and
+    # Errors frames behind one segmented switch. Tab indexes used across the
+    # code stay the same: 0 Run/Home, 1 Errors, 2 Stats, 3 History, 4 Settings.
     def _build(self):
-        self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
 
-        self._sidebar()
+        self._topbar()
         self._content()
+        self._watch_appearance()
 
-    def _sidebar(self):
-        sb = ctk.CTkFrame(self, width=64, corner_radius=0, fg_color=BG_CARD)
-        sb.grid(row=0, column=0, sticky="nsew")
-        sb.grid_propagate(False)
-        sb.grid_columnconfigure(0, weight=1)
-        sb.grid_rowconfigure(1, weight=1)
+    def _topbar(self):
+        tb = ctk.CTkFrame(self, height=56, corner_radius=0, fg_color=BG_SIDE)
+        tb.grid(row=0, column=0, sticky="ew")
+        tb.grid_propagate(False)
+        tb.pack_propagate(False)
+        ctk.CTkFrame(self, height=1, corner_radius=0, fg_color=LINE
+                     ).grid(row=0, column=0, sticky="sew")
 
-        # Logo
-        top = ctk.CTkFrame(sb, fg_color="transparent")
-        top.grid(row=0, column=0, sticky="ew")
-        ctk.CTkLabel(top, text="⚡", font=F("icon_lg"),
-                     text_color=ACCENT).pack(pady=(20, 2))
-        ctk.CTkLabel(top, text="Resuto", font=F("tiny"),
-                     text_color=FG_DIM).pack()
-        ctk.CTkLabel(top, text="by Zetene", font=F("tiny"),
-                     text_color=MUTED).pack()
-        ctk.CTkFrame(top, height=1, fg_color=BG_HOVER
-                     ).pack(fill="x", padx=8, pady=14)
+        # Logo only (it swaps between the indigo and dark-tile versions
+        # with the theme, like the window icon)
+        _logo = logo_image(30)
+        if _logo is not None:
+            ctk.CTkLabel(tb, text="", image=_logo).pack(side="left", padx=(20, 14))
+        else:
+            ctk.CTkLabel(tb, text="Resuto", font=F("heading"),
+                         text_color=FG).pack(side="left", padx=(20, 14))
 
-        # Main nav buttons
-        self._nav_btns = []
-        for icon, tip, idx in [("▶","Run",0), ("⚠","Errors",1),
-                                 ("◉","Stats",2), ("▤","History",3)]:
-            f = ctk.CTkFrame(top, fg_color="transparent", cursor="hand2")
-            f.pack(fill="x", pady=2)
-            icon_lbl = ctk.CTkLabel(f, text=icon, font=F("icon_lg"),
-                                     text_color=FG_DIM)
-            icon_lbl.pack()
-            tip_lbl = ctk.CTkLabel(f, text=tip, font=F("tiny"),
-                                    text_color=FG_DIM)
-            tip_lbl.pack()
-            # Bind ALL three widgets — frame, icon, AND label text
-            for w in (f, icon_lbl, tip_lbl):
-                w.bind("<Button-1>", lambda e, i=idx: self._nav(i))
-            self._bind_nav_hover(f, (f, icon_lbl, tip_lbl))
-            self._nav_btns.append((f, icon_lbl))
+        self._top_tabs = []
+        for name, idx in (("Home", 0), ("Activity", 2), ("Settings", 4)):
+            b = ctk.CTkButton(tb, text=name, width=88, height=32, corner_radius=16,
+                              font=F("body_b"), fg_color="transparent",
+                              hover_color=BG_HOVER, text_color=FG_DIM,
+                              command=lambda i=idx: self._nav(i))
+            b.pack(side="left", padx=2)
+            self._top_tabs.append(b)
 
-        # Spacer — pushes settings to bottom
-        ctk.CTkFrame(sb, fg_color="transparent").grid(row=1, column=0,
-                                                        sticky="nsew")
+        # Status pill (Ready / Running / phase)
+        pill = ctk.CTkFrame(tb, fg_color=BG_CARD, corner_radius=14,
+                            border_width=1, border_color=LINE)
+        pill.pack(side="right", padx=20)
+        self._phase_dot = ctk.CTkLabel(pill, text="●", font=F("tiny"),
+                                       text_color=SUCCESS)
+        self._phase_dot.pack(side="left", padx=(10, 4), pady=3)
+        self._phase_lbl = ctk.CTkLabel(pill, text="Ready", font=F("small"),
+                                       text_color=FG_DIM)
+        self._phase_lbl.pack(side="left", padx=(0, 12), pady=3)
 
-        # Settings pinned at bottom
-        bot = ctk.CTkFrame(sb, fg_color="transparent")
-        bot.grid(row=2, column=0, sticky="ew")
-        ctk.CTkFrame(bot, height=1, fg_color=BG_HOVER
-                     ).pack(fill="x", padx=8, pady=(0, 8))
-        sf = ctk.CTkFrame(bot, fg_color="transparent", cursor="hand2")
-        sf.pack(fill="x", pady=(0, 14))
-        sico = ctk.CTkLabel(sf, text="⚙", font=F("icon_lg"),
-                             text_color=FG_DIM)
-        sico.pack()
-        stip = ctk.CTkLabel(sf, text="Settings", font=F("tiny"),
-                             text_color=FG_DIM)
-        stip.pack()
-        for w in (sf, sico, stip):
-            w.bind("<Button-1>", lambda e: self._nav(4))
-        self._bind_nav_hover(sf, (sf, sico, stip))
-        self._nav_btns.append((sf, sico))   # index 4
-
-        # Keyboard access: Ctrl+1..5 switch tabs (Run, Errors, Stats,
-        # History, Settings) — the sidebar items are labels, not buttons
+        # Keyboard access: Ctrl+1..5 (Home, Issues, Overview, History, Settings)
         for i in range(5):
             self.bind_all("<Control-Key-%d>" % (i + 1),
                           lambda e, i=i: self._nav(i))
 
-    def _bind_nav_hover(self, frame, widgets):
-        """Subtle hover highlight so sidebar items read as clickable."""
-        def _on(_e):  frame.configure(fg_color=BG_HOVER)
-        def _off(_e): frame.configure(fg_color="transparent")
-        for w in widgets:
-            w.bind("<Enter>", _on, add="+")
-            w.bind("<Leave>", _off, add="+")
-
     def _content(self):
-        """Main right-side area: header bar, tab frames, status bar."""
+        """Page area (Home / Activity / Settings)."""
         cf = ctk.CTkFrame(self, corner_radius=0, fg_color=BG)
-        cf.grid(row=0, column=1, sticky="nsew")
-        cf.grid_rowconfigure(1, weight=1)
+        cf.grid(row=1, column=0, sticky="nsew")
+        cf.grid_rowconfigure(0, weight=1)
         cf.grid_columnconfigure(0, weight=1)
 
-        # Header
-        hdr = ctk.CTkFrame(cf, height=48, corner_radius=0, fg_color=BG_CARD)
-        hdr.grid(row=0, column=0, sticky="ew")
-        hdr.grid_propagate(False)
-        self._hdr_title = ctk.CTkLabel(hdr, text="Run",
-                                       font=F("heading"), text_color=FG)
-        self._hdr_title.pack(side="left", padx=16)
-        self._phase_lbl = ctk.CTkLabel(hdr, text="Ready",
-                                        font=F("label"), text_color=FG_DIM)
-        self._phase_lbl.pack(side="right", padx=16)
-        ctk.CTkFrame(cf, height=2, fg_color=ACCENT, corner_radius=0
-                     ).grid(row=0, column=0, sticky="sew")
-
-        # Tab stacking area
         self._tab_area = ctk.CTkFrame(cf, fg_color=BG, corner_radius=0)
-        self._tab_area.grid(row=1, column=0, sticky="nsew")
-        self._tab_area.grid_columnconfigure(0, weight=1)
-        self._tab_area.grid_rowconfigure(0, weight=1)
+        self._tab_area.grid(row=0, column=0, sticky="nsew")
 
         self._tabs = {}
-        for name in ("run","errors","stats","history","settings"):
-            tab = ctk.CTkFrame(self._tab_area, fg_color=BG, corner_radius=0)
-            # Do NOT grid here — tabs are shown/hidden via pack/pack_forget in _nav
-            self._tabs[name] = tab
+        self._tabs["run"]      = ctk.CTkFrame(self._tab_area, fg_color=BG, corner_radius=0)
+        self._tabs["settings"] = ctk.CTkFrame(self._tab_area, fg_color=BG, corner_radius=0)
+        self._activity         = ctk.CTkFrame(self._tab_area, fg_color=BG, corner_radius=0)
+        self._build_activity_shell()
+        for name in ("errors", "stats", "history"):
+            self._tabs[name] = ctk.CTkFrame(self._act_host, fg_color=BG, corner_radius=0)
 
         self._build_run()
         self._build_errors()
@@ -384,46 +360,108 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
         self._build_history()
         self._build_settings()
 
-        # Status bar
-        bar = ctk.CTkFrame(cf, height=24, corner_radius=0, fg_color=BG_CARD)
-        bar.grid(row=2, column=0, sticky="ew")
-        bar.grid_propagate(False)
-        self._status_var = ctk.StringVar(value="Ready.")
-        ctk.CTkLabel(bar, textvariable=self._status_var,
-                     font=F("small"), text_color=FG_DIM
-                     ).pack(side="left", padx=10)
+        # No bottom status line: status messages show in the top bar's pill
+        self._status_var = ctk.StringVar(value="Ready")
 
-        # Show Run tab immediately — no delay, no flash
         self._nav(0)
 
-    def _nav(self, idx: int):
-        """
-        Show exactly one tab frame, hide all others via pack/pack_forget.
-        pack_forget removes the widget from layout entirely — tkinter stops
-        rendering it, so there are zero ghost widgets during minimize/restore.
-        """
-        order = ("run", "errors", "stats", "history", "settings")
+    def _build_activity_shell(self):
+        """Activity page: title, Overview / History / Issues switch, issue banner."""
+        a = self._activity
+        hdr = ctk.CTkFrame(a, fg_color="transparent")
+        hdr.pack(fill="x", padx=24, pady=(18, 8))
+        ctk.CTkLabel(hdr, text="Activity", font=F("title"),
+                     text_color=FG).pack(side="left")
+        self._act_seg = ctk.CTkSegmentedButton(
+            hdr, values=["Overview", "History", "Issues"],
+            font=F("small_b"), height=32, command=self._on_act_seg)
+        self._act_seg.pack(side="right")
 
-        # Track which tab is active to debounce history loads
-        self._active_tab = idx
+        # Shown only when the last run logged problems
+        self._act_banner = ctk.CTkFrame(
+            a, fg_color=("#FFF8E6", "#2A2414"), corner_radius=10,
+            border_width=1, border_color=("#F5DFA6", "#4A3B17"))
+        self._act_banner_lbl = ctk.CTkLabel(self._act_banner, text="",
+                                            font=F("small_b"), text_color=WARNING)
+        self._act_banner_lbl.pack(side="left", padx=14, pady=8)
+        ctk.CTkButton(self._act_banner, text="Review", width=72, height=26,
+                      font=F("small_b"), fg_color="transparent",
+                      hover_color=BG_HOVER, text_color=ACCENT_TXT,
+                      command=lambda: self._nav(1)).pack(side="right", padx=8)
 
-        for i, name in enumerate(order):
-            tab = self._tabs[name]
-            if i == idx:
-                tab.pack(fill="both", expand=True)
-            else:
-                tab.pack_forget()
+        self._act_host = ctk.CTkFrame(a, fg_color=BG, corner_radius=0)
+        self._act_host.pack(fill="both", expand=True)
 
-        # Page name in the header (the window title already says "Resuto")
+    def _on_act_seg(self, value: str):
+        self._nav({"Overview": 2, "History": 3, "Issues": 1}.get(value, 2))
+
+    def _update_issue_banner(self):
         try:
-            self._hdr_title.configure(
-                text=("Run", "Errors", "Stats", "History", "Settings")[idx])
+            n = int(getattr(self, "_err_count", 0) or 0)
+            if n > 0 and getattr(self, "_active_tab", 0) != 1:
+                self._act_banner_lbl.configure(
+                    text="⚠  %d issue%s from the last run need%s attention"
+                         % (n, "" if n == 1 else "s", "s" if n == 1 else ""))
+                if not self._act_banner.winfo_ismapped():
+                    self._act_banner.pack(fill="x", padx=24, pady=(0, 8),
+                                          before=self._act_host)
+            else:
+                self._act_banner.pack_forget()
         except Exception:
             pass
 
-        # Highlight active nav icon + dim others
-        for i, (frm, ico) in enumerate(self._nav_btns):
-            ico.configure(text_color=ACCENT if i == idx else FG_DIM)
+    # ── Theme (appearance) ───────────────────────────────────────
+    def _watch_appearance(self):
+        """Notice light/dark switches (including 'follow Windows') and
+        refresh the parts plain tkinter draws itself."""
+        try:
+            mode = ctk.get_appearance_mode()
+            last = getattr(self, "_last_mode", None)
+            self._last_mode = mode
+            if last is not None and mode != last:
+                self._on_theme_changed()
+        except Exception:
+            pass
+        self.after(1000, self._watch_appearance)
+
+    def _on_theme_changed(self):
+        refresh_window_icons()
+        for fn in ("_apply_err_tags", "_redraw_donut"):
+            try:
+                getattr(self, fn)()
+            except Exception:
+                pass
+
+    def _nav(self, idx: int):
+        """Show one page; for Activity also pick Overview / History / Issues."""
+        self._active_tab = idx
+        page = "home" if idx == 0 else "settings" if idx == 4 else "activity"
+        for key, frm in (("home", self._tabs["run"]),
+                         ("activity", self._activity),
+                         ("settings", self._tabs["settings"])):
+            if key == page:
+                frm.pack(fill="both", expand=True)
+            else:
+                frm.pack_forget()
+
+        if page == "activity":
+            sub = {1: "errors", 2: "stats", 3: "history"}[idx]
+            for n in ("errors", "stats", "history"):
+                if n == sub:
+                    self._tabs[n].pack(fill="both", expand=True)
+                else:
+                    self._tabs[n].pack_forget()
+            try:
+                self._act_seg.set({"stats": "Overview", "history": "History",
+                                   "errors": "Issues"}[sub])
+            except Exception:
+                pass
+            self._update_issue_banner()
+
+        sel = {"home": 0, "activity": 1, "settings": 2}[page]
+        for i, b in enumerate(self._top_tabs):
+            b.configure(fg_color=ACCENT_SOFT if i == sel else "transparent",
+                        text_color=ACCENT_TXT if i == sel else FG_DIM)
 
         # Load history when navigating to it.
         # During a live run, _sched_stats also calls _load_history every 5s.
@@ -459,6 +497,7 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
         self._err_cnt_lbl.configure(
             text=f"{self._err_count} issue{'s' if self._err_count!=1 else ''}",
             text_color=WARNING)
+        self._update_issue_banner()
         # Only a real error (not a warning) may switch tabs, and never while
         # the bot is running — the user may be watching the Run tab
         if self._err_count == 1 and not warn and not self._live:
@@ -531,13 +570,19 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
 
     # ── Helpers ────────────────────────────────────────────────────
     def _set_status(self, t: str):
+        """Short status message (run finished, update downloading, ...),
+        shown in the top bar's status pill."""
         self._status_var.set(t)
+        t = (t or "").strip().rstrip(".") or "Ready"
+        self._phase_lbl.configure(text=t if len(t) <= 48 else t[:47] + "…")
 
     def _set_phase(self, t: str):
         self._phase_lbl.configure(text=t)
-        # Keep the bottom status bar in step during a run (it stayed "Starting...")
-        if getattr(self, "_live", False):
-            self._status_var.set(t)
+        try:
+            live = bool(getattr(self, "_live", False))
+            self._phase_dot.configure(text_color=ACCENT if live else SUCCESS)
+        except Exception:
+            pass
 
     # ── Settings tab ─────────────────────────────────────────────
     # Settings methods → views/settings_view.py

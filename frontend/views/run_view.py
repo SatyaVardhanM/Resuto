@@ -25,8 +25,9 @@ import traceback
 
 from frontend.bot_runner import BotRunner
 from frontend.constants import (
-    BG, BG_CARD, BG_FIELD, BG_HOVER,
-    ACCENT, ACCENT_HV, DANGER, SUCCESS, WARNING, STRETCH, MUTED,
+    BG, BG_CARD, BG_FIELD, BG_HOVER, LINE,
+    ACCENT, ACCENT_HV, ACCENT_TXT, QUEUED, C,
+    DANGER, SUCCESS, WARNING, STRETCH, MUTED,
     FG, FG_SOFT, FG_DIM,
     F, _FONT_FAMILY, _FONTS, _BASE_SIZE,
     APP_TITLE, BOT_SCRIPT,
@@ -38,6 +39,7 @@ from frontend.constants import (
     _IDLE_RE, _LAST_JOB_RE,
 )
 from frontend.views.dialogs   import ReviewWindow
+from frontend.branding        import logo_image
 
 
 class RunMixin:
@@ -50,19 +52,22 @@ class RunMixin:
 
         # Top bar: step label + stop button
         top = ctk.CTkFrame(f, fg_color="transparent")
-        top.grid(row=0, column=0, sticky="ew", padx=20, pady=(14, 0))
+        top.grid(row=0, column=0, sticky="ew", padx=24, pady=(14, 0))
+        self._run_topbar = top
         self._step_lbl = ctk.CTkLabel(top, text="", font=F("small"),
                                        text_color=FG_DIM)
         self._step_lbl.pack(side="left")
-        self._stop_btn = ctk.CTkButton(top, text="■  Stop", width=80,
-                                        fg_color=DANGER, hover_color="#C0392B",
+        self._stop_btn = ctk.CTkButton(top, text="■  Stop", width=84, height=32,
+                                        fg_color="transparent", text_color=DANGER,
+                                        border_width=1, border_color=DANGER,
+                                        hover_color=BG_HOVER, corner_radius=8,
                                         command=self._stop)
         self._stop_btn.pack(side="right")
         self._stop_btn.pack_forget()
 
         # Step container
         self._step_area = ctk.CTkFrame(f, fg_color="transparent")
-        self._step_area.grid(row=1, column=0, sticky="nsew", padx=20, pady=10)
+        self._step_area.grid(row=1, column=0, sticky="nsew", padx=24, pady=(10, 14))
         self._step_area.grid_columnconfigure(0, weight=1)
         self._step_area.grid_rowconfigure(0, weight=1)
         f.grid_rowconfigure(1, weight=1)
@@ -80,6 +85,14 @@ class RunMixin:
         self._show_step(0)
 
     def _show_step(self, idx: int):
+        # Home (step 0) has no step title / Stop row
+        try:
+            if idx == 0:
+                self._run_topbar.grid_remove()
+            else:
+                self._run_topbar.grid()
+        except Exception:
+            pass
         for i, s in enumerate(self._steps):
             if i == idx:
                 s.place(relx=0, rely=0, relwidth=1, relheight=1)
@@ -95,84 +108,269 @@ class RunMixin:
 
     def _s_start(self, f):
         """
-        Step 0 — Centered Start screen with animated pulsing button.
-        Validates API key and profile before proceeding.
+        Step 0 — Home: hero card (Start run, this week's numbers), the search
+        Resuto will run, and today's activity. Validates API key and profile
+        when Start is pressed.
         """
-        f.grid_rowconfigure(0, weight=1)
         f.grid_columnconfigure(0, weight=1)
+        f.grid_rowconfigure(1, weight=1)
 
-        center = ctk.CTkFrame(f, fg_color="transparent")
-        center.place(relx=0.5, rely=0.45, anchor="center")
+        # ── Hero ──────────────────────────────────────────────────
+        hero = ctk.CTkFrame(f, fg_color=BG_CARD, corner_radius=16,
+                            border_width=1, border_color=LINE)
+        hero.grid(row=0, column=0, sticky="ew", pady=(4, 12))
+        hero.grid_columnconfigure(0, weight=1)
+        ctk.CTkFrame(hero, height=3, corner_radius=2, fg_color=ACCENT
+                     ).grid(row=0, column=0, columnspan=2, sticky="ew",
+                            padx=14, pady=(3, 0))
+        self._home_eyebrow = ctk.CTkLabel(hero, text="READY", font=F("small_b"),
+                                          text_color=ACCENT_TXT)
+        self._home_eyebrow.grid(row=1, column=0, columnspan=2, sticky="w",
+                                padx=26, pady=(14, 0))
+        ctk.CTkLabel(hero, text="Your next role is out there.", font=F("stat"),
+                     text_color=FG).grid(row=2, column=0, columnspan=2,
+                                         sticky="w", padx=26)
+        ctk.CTkLabel(hero, text=("Resuto searches, tailors your resume for each "
+                                 "job, and applies while you do something else."),
+                     font=F("label"), text_color=FG_DIM, justify="left",
+                     wraplength=560).grid(row=3, column=0, columnspan=2,
+                                          sticky="w", padx=26, pady=(2, 14))
 
-        # App icon / greeting
-        ctk.CTkLabel(center, text="⚡", font=(_FONT_FAMILY, 48),
-                     text_color=ACCENT).pack(pady=(0, 8))
-        ctk.CTkLabel(center, text="Resuto",
-                     font=F("heading"), text_color=FG).pack()
-        ctk.CTkLabel(center, text="Find and apply to matching jobs automatically.",
-                     font=F("small"), text_color=FG_DIM).pack(pady=(4, 32))
-
-        # Animated Start button
-        self._start_btn_outer = ctk.CTkFrame(center, fg_color="transparent")
-        self._start_btn_outer.pack()
+        btns = ctk.CTkFrame(hero, fg_color="transparent")
+        btns.grid(row=4, column=0, sticky="w", padx=26, pady=(0, 18))
+        self._start_btn_outer = btns
         self._start_main_btn = ctk.CTkButton(
-            self._start_btn_outer, text="▶  Start Run",
-            width=220, height=56, font=F("body_b"),
-            fg_color=ACCENT, hover_color=ACCENT_HV,
-            corner_radius=28,
-            command=self._start_validate)
-        self._start_main_btn.pack()
+            btns, text="▶  Start run", width=140, height=40, font=F("body_b"),
+            fg_color=ACCENT, hover_color=ACCENT_HV, text_color="#FFFFFF",
+            corner_radius=10, command=self._start_validate)
+        self._start_main_btn.pack(side="left")
+        self._home_queue_btn = ctk.CTkButton(
+            btns, text="Review queue", width=150, height=40, font=F("body_b"),
+            fg_color=BG_FIELD, hover_color=BG_HOVER, text_color=FG,
+            border_width=1, border_color=LINE, corner_radius=10,
+            command=self._start_apply_queue)
+        self._start_err = ctk.CTkLabel(btns, text="", font=F("small"),
+                                       text_color=DANGER, wraplength=320,
+                                       justify="left")
+        self._start_err.pack(side="left", padx=(14, 0))
 
-        # Start the pulse animation (pauses while hovered or not visible)
-        self._pulse_hover = False
-        self._start_main_btn.bind(
-            "<Enter>", lambda e: setattr(self, "_pulse_hover", True), add="+")
-        self._start_main_btn.bind(
-            "<Leave>", lambda e: setattr(self, "_pulse_hover", False), add="+")
-        self._start_pulse()
+        stats = ctk.CTkFrame(hero, fg_color="transparent")
+        stats.grid(row=4, column=1, sticky="e", padx=26, pady=(0, 18))
+        self._home_stat = {}
+        for key, cap in (("week", "applied this week"), ("avg", "avg match"),
+                         ("queued", "queued")):
+            col = ctk.CTkFrame(stats, fg_color="transparent")
+            col.pack(side="left", padx=(24, 0))
+            v = ctk.CTkLabel(col, text="–", font=F("title"), text_color=FG)
+            v.pack(anchor="e")
+            ctk.CTkLabel(col, text=cap, font=F("tiny"),
+                         text_color=MUTED).pack(anchor="e")
+            self._home_stat[key] = v
 
-        # Error / status message below button
-        self._start_err = ctk.CTkLabel(center, text="",
-                                        font=F("small"), text_color=DANGER,
-                                        wraplength=420, justify="center")
-        self._start_err.pack(pady=(16, 0))
+        # ── Search summary + today's activity ─────────────────────
+        row = ctk.CTkFrame(f, fg_color="transparent")
+        row.grid(row=1, column=0, sticky="nsew")
+        row.grid_rowconfigure(0, weight=1)
+        row.grid_columnconfigure(0, weight=10, uniform="home")
+        row.grid_columnconfigure(1, weight=19, uniform="home")
 
-        # Quick status row: profile + API key
-        status_row = ctk.CTkFrame(center, fg_color="transparent")
-        status_row.pack(pady=(20, 0))
-        self._start_profile_dot = ctk.CTkLabel(
-            status_row, text="", font=F("small"), text_color=MUTED)
-        self._start_profile_dot.pack()
-        self._start_key_dot = ctk.CTkLabel(
-            status_row, text="", font=F("small"), text_color=MUTED)
-        self._start_key_dot.pack()
+        sc = ctk.CTkFrame(row, fg_color=BG_CARD, corner_radius=14,
+                          border_width=1, border_color=LINE)
+        sc.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        sh = ctk.CTkFrame(sc, fg_color="transparent")
+        sh.pack(fill="x", padx=18, pady=(14, 6))
+        ctk.CTkLabel(sh, text="Search", font=F("body_b"),
+                     text_color=FG).pack(side="left")
+        ctk.CTkButton(sh, text="Edit", width=40, height=24, font=F("small_b"),
+                      fg_color="transparent", hover_color=BG_HOVER,
+                      text_color=ACCENT_TXT, command=lambda: self._nav(4)
+                      ).pack(side="right")
+        self._home_kv = {}
+        kv = ctk.CTkFrame(sc, fg_color="transparent")
+        kv.pack(fill="x", padx=18)
+        kv.grid_columnconfigure(1, weight=1)
+        for r, (key, cap) in enumerate((("where", "Where"), ("posted", "Posted"),
+                                        ("filters", "Filters"), ("mode", "Mode"),
+                                        ("resume", "Resume"))):
+            ctk.CTkLabel(kv, text=cap, font=F("small"), text_color=MUTED,
+                         anchor="w", width=62).grid(row=r, column=0, sticky="nw", pady=3)
+            v = ctk.CTkLabel(kv, text="–", font=F("small_b"), text_color=FG,
+                             anchor="w", justify="left", wraplength=190)
+            v.grid(row=r, column=1, sticky="w", pady=3)
+            self._home_kv[key] = v
+        # Readiness (profile + API key) — click a missing item to fix it
+        ready = ctk.CTkFrame(sc, fg_color="transparent")
+        ready.pack(fill="x", padx=18, pady=(10, 14), side="bottom")
+        self._start_profile_dot = ctk.CTkLabel(ready, text="", font=F("small"),
+                                               text_color=MUTED, anchor="w")
+        self._start_profile_dot.pack(fill="x")
+        self._start_key_dot = ctk.CTkLabel(ready, text="", font=F("small"),
+                                           text_color=MUTED, anchor="w")
+        self._start_key_dot.pack(fill="x")
+        # Kept for _refresh_start_status (resume length is shown in the card)
+        self._start_len_lbl = ctk.CTkLabel(sc, text="")
 
-        # Resume length: current rule + a short rule-of-thumb tip
-        self._start_len_lbl = ctk.CTkLabel(
-            center, text="", font=F("small"), text_color=FG_DIM,
-            wraplength=460, justify="center")
-        self._start_len_lbl.pack(pady=(14, 0))
-        ctk.CTkLabel(
-            center,
-            text=("Tip: under 5 years' experience, 1 page works best; "
-                  "5+ years, up to 2 pages is normal.\n"
-                  "Change it in Settings → Resume Length."),
-            font=F("tiny"), text_color=MUTED, wraplength=460, justify="center"
-        ).pack(pady=(4, 0))
+        tc = ctk.CTkFrame(row, fg_color=BG_CARD, corner_radius=14,
+                          border_width=1, border_color=LINE)
+        tc.grid(row=0, column=1, sticky="nsew")
+        th = ctk.CTkFrame(tc, fg_color="transparent")
+        th.pack(fill="x", padx=18, pady=(14, 4))
+        ctk.CTkLabel(th, text="Recent activity", font=F("body_b"),
+                     text_color=FG).pack(side="left")
+        ctk.CTkButton(th, text="All activity", width=80, height=24,
+                      font=F("small_b"), fg_color="transparent",
+                      hover_color=BG_HOVER, text_color=ACCENT_TXT,
+                      command=lambda: self._nav(3)).pack(side="right")
+        self._home_tl = ctk.CTkFrame(tc, fg_color="transparent")
+        self._home_tl.pack(fill="both", expand=True, padx=18, pady=(0, 12))
+
         self._refresh_start_status()
+
+    # ── Home data ─────────────────────────────────────────────────
+    _STATUS_STYLE = {
+        "applied":      ("Applied",  SUCCESS),
+        "matched":      ("Queued",   QUEUED),
+        "resume_ready": ("Queued",   QUEUED),
+        "skipped":      ("Skipped",  MUTED),
+        "failed":       ("Failed",   DANGER),
+        "scanning":     ("Checking", ACCENT_TXT),
+    }
+
+    @staticmethod
+    def _ago(ts: str) -> str:
+        try:
+            dt = datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S")
+            secs = max(0, (datetime.now() - dt).total_seconds())
+        except Exception:
+            return ""
+        if secs < 60:
+            return "now"
+        if secs < 3600:
+            return "%dm ago" % (secs // 60)
+        if secs < 86400:
+            return "%dh ago" % (secs // 3600)
+        return "%dd ago" % (secs // 86400)
+
+    def _home_refresh(self):
+        """Fill the Home numbers, search summary and recent activity."""
+        if not hasattr(self, "_home_stat"):
+            return
+        # Numbers + recent jobs
+        try:
+            from frontend.app import _read_stats
+            from datetime import timedelta
+            allst  = _read_stats() or {}
+            week   = _read_stats(since=(datetime.now() - timedelta(days=7)
+                                        ).strftime("%Y-%m-%d")) or {}
+        except Exception:
+            allst, week = {}, {}
+        counts  = allst.get("counts", {}) or {}
+        queued  = int(allst.get("queued", 0) or 0)
+        applied_week = int((week.get("counts", {}) or {}).get("applied", 0) or 0)
+        avg = int(allst.get("avg", 0) or 0)
+        self._home_stat["week"].configure(text=str(applied_week))
+        self._home_stat["avg"].configure(text=("%d%%" % avg) if avg else "–")
+        self._home_stat["queued"].configure(text=str(queued))
+        if queued > 0:
+            self._home_queue_btn.configure(text="Review queue (%d)" % queued)
+            if not self._home_queue_btn.winfo_ismapped():
+                self._home_queue_btn.pack(side="left", padx=(10, 0),
+                                          before=self._start_err)
+        else:
+            self._home_queue_btn.pack_forget()
+
+        # Search summary (Settings → Job preferences + resume length)
+        try:
+            prefs = self._load_job_prefs()
+        except Exception:
+            prefs = {}
+        place = {"on_site": "On-site", "remote": "Remote", "hybrid": "Hybrid"}
+        wp = [place.get(v, v) for v in prefs.get("workplace", [])] or ["Any workplace"]
+        posted = {"any": "Any time", "month": "Past month", "week": "Past week",
+                  "24hr": "Past 24 hours"}.get(prefs.get("date_posted", "any"), "Any time")
+        jt = [str(v).replace("_", " ").title() for v in prefs.get("job_types", [])]
+        filt = ["Easy Apply only" if prefs.get("easy_apply_only", True) else "All apply types"]
+        filt += jt[:3]
+        mode = {"continuous": "Prepare all first",
+                "one_at_a_time": "One job at a time"}.get(
+                    prefs.get("application_mode", "continuous"), "Prepare all first")
+        try:
+            from api.resume_length import get_setting
+            resume = {"auto": "Auto length", "1": "1 page",
+                      "2": "Up to 2 pages"}[get_setting()] + " · tailored per job"
+        except Exception:
+            resume = "Tailored per job"
+        for k, v in (("where", " · ".join(wp)), ("posted", posted),
+                     ("filters", " · ".join(filt)), ("mode", mode),
+                     ("resume", resume)):
+            self._home_kv[k].configure(text=v)
+
+        # Eyebrow
+        if queued:
+            self._home_eyebrow.configure(
+                text="READY  ·  %d JOB%s QUEUED FOR REVIEW" % (queued, "" if queued == 1 else "S"))
+        else:
+            self._home_eyebrow.configure(text="READY")
+
+        # Recent activity (timeline)
+        for w in self._home_tl.winfo_children():
+            w.destroy()
+        jobs = (allst.get("jobs") or [])[:4]
+        if not jobs:
+            ctk.CTkLabel(self._home_tl,
+                         text="No activity yet. Press Start run to find your first matches.",
+                         font=F("small"), text_color=MUTED, wraplength=380,
+                         justify="left").pack(anchor="w", pady=(12, 0))
+            return
+        for j in jobs:
+            label, col = self._STATUS_STYLE.get(j.get("status", ""),
+                                                (str(j.get("status", "")).title(), MUTED))
+            r = ctk.CTkFrame(self._home_tl, fg_color="transparent")
+            r.pack(fill="x", pady=5)
+            r.grid_columnconfigure(1, weight=1)
+            ctk.CTkLabel(r, text="●", font=F("small"), text_color=col, width=14
+                         ).grid(row=0, column=0, rowspan=2, sticky="n", padx=(0, 8))
+            ctk.CTkLabel(r, text=(j.get("job_title") or "Untitled role")[:60],
+                         font=F("small_b"), text_color=FG, anchor="w"
+                         ).grid(row=0, column=1, sticky="w")
+            sub = [j.get("company") or ""]
+            if j.get("match_score"):
+                sub.append("%s%% match" % j.get("match_score"))
+            reason = (j.get("ai_reason") or j.get("notes") or "").strip().split("\n")[0]
+            if reason:
+                sub.append(reason[:70])
+            ctk.CTkLabel(r, text=" · ".join(x for x in sub if x), font=F("tiny"),
+                         text_color=MUTED, anchor="w"
+                         ).grid(row=1, column=1, sticky="w")
+            ctk.CTkLabel(r, text=self._ago(j.get("logged_at", "")), font=F("tiny"),
+                         text_color=MUTED).grid(row=0, column=2, sticky="e", padx=(8, 8))
+            ctk.CTkLabel(r, text=" %s " % label, font=F("tiny"), text_color=col,
+                         fg_color=BG_FIELD, corner_radius=8
+                         ).grid(row=0, column=3, sticky="e")
 
     def _refresh_start_status(self):
         """Update profile and API key status dots on the start screen."""
         has_xml = Path(self._xml_path()).exists()
         has_key = bool(self._api_var.get().strip())
         self._start_profile_dot.configure(
-            text=("✓  Resume profile loaded" if has_xml
-                  else "✕  No profile — add in Settings"),
-            text_color=SUCCESS if has_xml else DANGER)
+            text=("✓  Resume profile ready" if has_xml
+                  else "○  Add your resume profile  →"),
+            text_color=SUCCESS if has_xml else WARNING,
+            cursor="arrow" if has_xml else "hand2")
         self._start_key_dot.configure(
             text=("✓  API key ready" if has_key
-                  else "✕  No API key — add in Settings"),
-            text_color=SUCCESS if has_key else DANGER)
+                  else "○  Add your API key  →"),
+            text_color=SUCCESS if has_key else WARNING,
+            cursor="arrow" if has_key else "hand2")
+        for _lbl, _ok in ((self._start_profile_dot, has_xml),
+                          (self._start_key_dot, has_key)):
+            _lbl.unbind("<Button-1>")
+            if not _ok:
+                _lbl.bind("<Button-1>", lambda e: self._nav(4))
+        try:
+            self._home_refresh()
+        except Exception:
+            pass
         try:
             txt = ""
             if has_xml:
@@ -187,7 +385,8 @@ class RunMixin:
             pass
 
     def _start_pulse(self):
-        """Pulse the start button border to draw attention."""
+        """Former pulsing Start button — the redesign keeps it still."""
+        return
         if not hasattr(self, "_pulse_state"):
             self._pulse_state = 0
         colours = [ACCENT, ACCENT_HV, "#7B89F8", ACCENT_HV, ACCENT]
@@ -289,7 +488,7 @@ class RunMixin:
                                       anchor="w", wraplength=360)
         self._cost_lbl.pack(side="left", fill="x", expand=True)
         ctk.CTkButton(cost_row, text="Check my balance", width=130, height=28,
-                      font=F("small"), fg_color=BG_FIELD, hover_color=BG_HOVER,
+                      font=F("small"), fg_color=BG_FIELD, text_color=FG, hover_color=BG_HOVER,
                       command=self._open_billing).pack(side="right")
         self._maxjobs_var.trace_add("write", lambda *_: self._update_cost_estimate())
         self._update_cost_estimate()
@@ -307,7 +506,7 @@ class RunMixin:
         nav = ctk.CTkFrame(f, fg_color="transparent")
         nav.pack(fill="x", pady=(16, 0))
         ctk.CTkButton(nav, text="Back", width=100,
-                      fg_color=BG_CARD, hover_color=BG_HOVER,
+                      fg_color=BG_CARD, text_color=FG, hover_color=BG_HOVER,
                       command=lambda: self._show_step(0)).pack(side="left")
         ctk.CTkButton(nav, text="Analyse my profile",
                       command=self._s2_next).pack(side="right")
@@ -570,7 +769,7 @@ class RunMixin:
         nav = ctk.CTkFrame(f, fg_color="transparent")
         nav.grid(row=3, column=0, sticky="ew", pady=(8,0))
         ctk.CTkButton(nav, text="← Back", width=100,
-                      fg_color=BG_CARD, hover_color=BG_HOVER,
+                      fg_color=BG_CARD, text_color=FG, hover_color=BG_HOVER,
                       command=lambda: self._show_step(1)).pack(side="left")
         self._start_btn = ctk.CTkButton(nav, text="▶  Start Run",
                                          command=self._start)
@@ -601,11 +800,11 @@ class RunMixin:
             var = _ctk2.BooleanVar(value=auto_checked)
 
             if score >= 70:
-                score_color, score_bg = "#88DD88", "#1A3A1A"
+                score_color, score_bg = ("#15803D", "#88DD88"), ("#E7F6EC", "#1A3A1A")
             elif score >= 50:
-                score_color, score_bg = "#FFCC44", "#3A3000"
+                score_color, score_bg = ("#A16207", "#FFCC44"), ("#FFF6DD", "#3A3000")
             else:
-                score_color, score_bg = "#FF8888", "#3A1A1A"
+                score_color, score_bg = ("#B42318", "#FF8888"), ("#FDECEC", "#3A1A1A")
 
             row = _ctk2.CTkFrame(self._role_scroll, fg_color="transparent")
             row.pack(fill="x", pady=2)
@@ -756,11 +955,11 @@ class RunMixin:
 
         ctk.CTkButton(top, text="📂 Open Log", width=100,
                       height=28, font=F("small"),
-                      fg_color=BG_CARD, hover_color=BG_HOVER,
+                      fg_color=BG_CARD, text_color=FG, hover_color=BG_HOVER,
                       command=_open_log).pack(side="right", padx=(4,0))
         ctk.CTkButton(top, text="📍 Log Path", width=90,
                       height=28, font=F("small"),
-                      fg_color=BG_CARD, hover_color=BG_HOVER,
+                      fg_color=BG_CARD, text_color=FG, hover_color=BG_HOVER,
                       command=_show_log_path).pack(side="right", padx=(4,0))
         self._err_cnt_lbl = ctk.CTkLabel(top, text="0 issues",
                                           font=F("small"), text_color=FG_DIM)
@@ -773,9 +972,16 @@ class RunMixin:
                                         text_color=FG_SOFT, state="disabled",
                                         wrap="word")
         self._err_box.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0,16))
-        self._err_box.tag_config("err",  foreground="#FF6B6B")
-        self._err_box.tag_config("warn", foreground="#FFD166")
-        self._err_box.tag_config("ts",   foreground=MUTED)
+        self._apply_err_tags()
+
+    def _apply_err_tags(self):
+        """Error-log colours for the current theme (Text tags need plain hex)."""
+        try:
+            self._err_box.tag_config("err",  foreground=C(("#B42318", "#FF6B6B")))
+            self._err_box.tag_config("warn", foreground=C(("#A16207", "#FFD166")))
+            self._err_box.tag_config("ts",   foreground=C(MUTED))
+        except Exception:
+            pass
 
     # ── Stats tab ─────────────────────────────────────────────────
     # Stats methods → views/stats_view.py
@@ -1037,6 +1243,10 @@ class RunMixin:
         self._err_box.configure(state="disabled")
         self._err_count = 0
         self._err_cnt_lbl.configure(text="0 issues", text_color=FG_DIM)
+        try:
+            self._update_issue_banner()
+        except Exception:
+            pass
 
     # ── Bot output ─────────────────────────────────────────────────
     def _on_bot_line(self, line: str):
