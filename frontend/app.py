@@ -287,6 +287,8 @@ class App(ctk.CTk, RunMixin, HistoryMixin, StatsMixin, SettingsMixin):
                      text_color=ACCENT).pack(pady=(20, 2))
         ctk.CTkLabel(top, text="Resuto", font=F("tiny"),
                      text_color=FG_DIM).pack()
+        ctk.CTkLabel(top, text="by Zetene", font=F("tiny"),
+                     text_color=MUTED).pack()
         ctk.CTkFrame(top, height=1, fg_color=BG_HOVER
                      ).pack(fill="x", padx=8, pady=14)
 

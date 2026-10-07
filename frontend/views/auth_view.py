@@ -95,7 +95,8 @@ class AccessWindow(ctk.CTkToplevel):
         hdr = ctk.CTkFrame(self, fg_color="transparent")
         hdr.pack(fill="x", padx=30, pady=(28, 0))
         _label(hdr, "Resuto", "title").pack()
-        _label(hdr, "AI-powered resume tailoring", "small", MUTED).pack(pady=(2, 0))
+        _label(hdr, "by Zetene", "tiny", MUTED).pack()
+        _label(hdr, "Smart resume tailoring", "small", MUTED).pack(pady=(6, 0))
 
         # ── Choice buttons
         choice = ctk.CTkFrame(self, fg_color="transparent")
