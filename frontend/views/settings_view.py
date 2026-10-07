@@ -557,6 +557,25 @@ class SettingsMixin:
         ctk.CTkLabel(about_txt, text="by Zetene", font=F("tiny"),
                      text_color=MUTED).pack(anchor="w")
 
+        # Pages: each menu entry shows only its own sections
+        self._set_pages = {
+            "Claude API Key":     ["Claude API Key"],
+            "Work Authorization": ["Work Authorization"],
+            "Resume Profile":     ["Resume Profile", "Resume Length"],
+            "Browser Profile":    ["Browser Profile"],
+            "Job Preferences":    ["Job Preferences"],
+            "Appearance":         ["Appearance", "Text Size"],
+        }
+        # Remember which grid row every widget sits on, and where each
+        # section starts, so a page can show just its rows
+        for w in f.grid_slaves():
+            try:
+                w._set_row = int(w.grid_info()["row"])
+            except Exception:
+                w._set_row = -1
+        self._set_section_rows = sorted(
+            (lbl._set_row, key) for key, lbl in self._set_sections.items())
+
         # Side-menu entries (built last so every section exists)
         for title, key in (("Account", "Claude API Key"),
                            ("Work authorization", "Work Authorization"),
@@ -574,7 +593,7 @@ class SettingsMixin:
             b.pack(fill="x", padx=12, pady=1)
             b._section_key = key
             self._set_nav_btns.append(b)
-        self._settings_highlight("Claude API Key")
+        self._settings_goto("Claude API Key")
 
     # ── Resume profile helpers ────────────────────────────────────
 
@@ -587,14 +606,26 @@ class SettingsMixin:
                         text_color=ACCENT_TXT if on else FG_DIM)
 
     def _settings_goto(self, key: str):
-        """Scroll the settings page so the section starts at the top."""
+        """Show one settings page (only its sections) and scroll to the top."""
         self._settings_highlight(key)
         try:
-            sc = self._settings_scroll
-            w = self._set_sections[key]
-            sc.update_idletasks()
-            total = max(1, sc.winfo_height())
-            sc._parent_canvas.yview_moveto(max(0.0, (w.winfo_y() - 8) / total))
+            sections = self._set_pages.get(key, [key])
+            starts = self._set_section_rows
+            rows = set()
+            for i, (start, name) in enumerate(starts):
+                if name in sections:
+                    end = starts[i + 1][0] if i + 1 < len(starts) else 10 ** 6
+                    rows.update(range(start, end))
+            for w in self._settings_scroll.winfo_children():
+                r = getattr(w, "_set_row", None)
+                if r is None or r < 0:
+                    continue
+                if r in rows:
+                    w.grid()
+                else:
+                    w.grid_remove()
+            self._settings_scroll._parent_canvas.yview_moveto(0.0)
+            self._settings_page = key
         except Exception:
             pass
 

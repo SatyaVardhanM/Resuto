@@ -183,7 +183,8 @@ class RunMixin:
                      text_color=FG).pack(side="left")
         ctk.CTkButton(sh, text="Edit", width=40, height=24, font=F("small_b"),
                       fg_color="transparent", hover_color=BG_HOVER,
-                      text_color=ACCENT_TXT, command=lambda: self._nav(4)
+                      text_color=ACCENT_TXT,
+                      command=lambda: self._open_settings("Job Preferences")
                       ).pack(side="right")
         self._home_kv = {}
         kv = ctk.CTkFrame(sc, fg_color="transparent")
@@ -225,6 +226,14 @@ class RunMixin:
         self._home_tl.pack(fill="both", expand=True, padx=18, pady=(0, 12))
 
         self._refresh_start_status()
+
+    def _open_settings(self, page: str):
+        """Open Settings on a specific page (e.g. "Job Preferences")."""
+        self._nav(4)
+        try:
+            self._settings_goto(page)
+        except Exception:
+            pass
 
     # ── Home data ─────────────────────────────────────────────────
     _STATUS_STYLE = {
@@ -364,11 +373,11 @@ class RunMixin:
                   else "○  Add your API key  →"),
             text_color=SUCCESS if has_key else WARNING,
             cursor="arrow" if has_key else "hand2")
-        for _lbl, _ok in ((self._start_profile_dot, has_xml),
-                          (self._start_key_dot, has_key)):
+        for _lbl, _ok, _page in ((self._start_profile_dot, has_xml, "Resume Profile"),
+                                 (self._start_key_dot, has_key, "Claude API Key")):
             _lbl.unbind("<Button-1>")
             if not _ok:
-                _lbl.bind("<Button-1>", lambda e: self._nav(4))
+                _lbl.bind("<Button-1>", lambda e, p=_page: self._open_settings(p))
         try:
             self._home_refresh()
         except Exception:
@@ -410,18 +419,18 @@ class RunMixin:
         if not key:
             self._start_err.configure(
                 text="Add your Claude API key in Settings first.")
-            self._nav(4)   # open settings
+            self._open_settings("Claude API Key")
             return
         if not key.startswith("sk-ant-"):
             self._start_err.configure(
                 text="Claude API keys start with sk-ant-")
-            self._nav(4)
+            self._open_settings("Claude API Key")
             return
         xml = Path(self._xml_path())
         if not xml.exists():
             self._start_err.configure(
                 text="No resume profile found. Upload your resume in Settings first.")
-            self._nav(4)
+            self._open_settings("Resume Profile")
             return
         self._start_err.configure(text="")
 
@@ -447,7 +456,7 @@ class RunMixin:
                            % (ov["roles"], ov["bullets"], ov["pages"],
                               "1 page" if tgt == 1 else "2 pages"))
                     if messagebox.askyesno("Your resume profile is long", msg):
-                        self._nav(4)
+                        self._open_settings("Resume Profile")
                         return
             except Exception:
                 pass

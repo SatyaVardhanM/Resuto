@@ -1,2 +1,2 @@
 # core/version.py — bumped automatically by scripts/ci_bump_version.py
-APP_VERSION = "1.0.66"
+APP_VERSION = "1.0.67"

@@ -85,3 +85,7 @@ env/
 crazyfolk-labs.pfx
 crazyfolk-labs.pfx.b64.txt
 check_creds.py
+
+# Claude design drafts, screenshots and notes (never commit — the release
+# workflow copies the repo into the public Resuto repo)
+Claude outputs/
