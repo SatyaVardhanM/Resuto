@@ -131,7 +131,7 @@ class RunMixin:
                      text_color=FG).grid(row=2, column=0, columnspan=2,
                                          sticky="w", padx=26)
         ctk.CTkLabel(hero, text=("Resuto searches, tailors your resume for each "
-                                 "job, and applies while you do something else."),
+                                 "job, and has every application ready before you are."),
                      font=F("label"), text_color=FG_DIM, justify="left",
                      wraplength=560).grid(row=3, column=0, columnspan=2,
                                           sticky="w", padx=26, pady=(2, 14))
